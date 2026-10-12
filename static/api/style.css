@@ -1,0 +1,180 @@
+:root {
+    --primary: #2d6ae2;
+    --card-bg: #e0f7fa; /* 淡青色背景 */
+}
+form {
+    position: relative;
+    display: flex;
+    flex-wrap:nowrap;
+    gap: 3px;
+    margin-bottom:20px;
+    justify-content: center;
+   margin: 0 ; /* 水平居中 */
+   padding: 0 ; /* 取消默认边距 */
+}
+
+/* 新增链接表单 */
+#addForm {
+    margin: 5px;
+    padding: 5px;
+    background: white;
+    border-radius: 8px;
+}
+
+#name{min-width: 200px;}
+input {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    min-width: 400px;
+}
+
+button {
+    padding: 10px 15px;
+    background-color: #63c5e2;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    text-wrap: nowrap ;
+}
+
+button:hover {
+    background-color: #047c8b;
+}
+
+.card-grid {
+  position: relative;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 20px;
+    padding: 20px;
+    max-width: 1200px;
+    margin: 0 auto; /* 水平居中 */
+}
+
+.card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 10px 10px 10px 10px;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center; /* 图标标题同行 */
+    gap: 15px;
+  position: relative;
+  background: #f0faff;
+  padding: 15px;
+  border-radius: 8px;
+  transition: all 0.3s;
+}
+
+.card:hover {
+    background: #b2ebf2; /* 悬停加深 */
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    padding:  10px 20px 10px 20px; /* 增加内边距 */
+}
+
+.card-content {
+    flex: 1;
+}
+
+.card-icon {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+    display: none; /* 默认隐藏 */
+}
+
+.card-title {
+    margin: 0;
+    font-size: 16px;
+}
+
+/* 悬停显示按钮 */
+.card:hover .action-buttons {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.action-buttons {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  gap: 1px;
+  opacity: 0;
+  transform: translateY(-5px);
+  transition: all 0.3s;
+}
+
+/* 按钮样式 */
+.edit-btn, .delete-btn {
+  background: rgba(255,255,255,0.9);
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 2px 2px;
+  cursor: pointer;
+  transition: all 0.2s;
+
+    font-family:
+    -apple-system,  /* macOS/iOS 自带字体 */
+    BlinkMacSystemFont,
+    "Segoe UI Emoji",  /* Windows 10+ 自带字体 */
+    "Segoe UI Symbol", /* Windows 旧版 */
+    "Noto Color Emoji", /* 跨平台开源字体 */
+    "Android Emoji",   /* Android 系统字体 */
+    sans-serif;
+}
+
+.edit-btn:hover {
+  background: #e6f4ff;
+  border-color: #2d6ae2;
+}
+
+.delete-btn:hover {
+  background: #ffeef0;
+  border-color: #ff4d4f;
+}
+
+/* 添加拖拽相关样式 */
+.card.dragging {
+  opacity: 0.5;
+  transform: scale(0.98);
+}
+
+.card.placeholder {
+  border: 2px dashed var(--primary);
+  background: transparent;
+}
+
+@keyframes slide {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(50px); }
+}
+
+.slide-right {
+  animation: slide 0.3s forwards;
+}
+
+.slide-left {
+  animation: slide 0.3s reverse;
+}
+
+.search-engine-container {
+    display: flex;
+    padding: 20px;
+    gap: 10px;
+    align-items: center;
+}
+
+#search-engine {
+    justify-content: center;
+    align-items: center;
+    font-size: 16px;
+    height: 36px;
+    width: 100px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    text-align: center;
+}

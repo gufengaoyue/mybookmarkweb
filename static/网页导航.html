@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>资源导航</title>
+    <link rel="stylesheet" type="text/css" href="api/style.css">
+    <link rel="stylesheet" type="text/css" href="api/fav.css">
+    <link rel="stylesheet" type="text/css" href="api/timezone.css">
+    <script type="text/javascript" src="api/func.js"></script>
+    <script type="text/javascript" src="api/timezone.js"></script>
+    <script type="text/javascript" src="api/sync.js"></script>
+</head>
+<body onload="loadData(); initTimezone();">   
+    <form>
+        <div class="search-engine-container">
+            <select id="search-engine">
+                <option value="baidu">百度</option>
+                <option value="360">360搜索</option>
+                <option value="bing">Bing</option>
+<!--                <option value="google">Google</option>-->
+            </select>
+            <input type="text" placeholder="输入关键字搜索" id="search-input" onkeydown="if(event.keyCode==13){handleSearch(event);return false;}"  >
+            <button type="button" onclick="handleSearch(event)">搜索</button>
+
+            <button id="collectBtn" class="collect-btn" onclick="toggleModal('block')"><span class="icon">⭐</span>新增收藏</button>
+
+            <!-- 收藏弹窗，动画效果 -->
+            <div id="collectModal" class="modal">
+              <div class="modal-content">
+                <form id="collectForm">
+                  <div class="form-group">
+                    <label>网站名称</label>
+                    <input type="text" id="collectName"  placeholder="网站名称" required>
+                  </div>
+                  <div class="form-group">
+                    <label>网站地址</label>
+                    <input type="url" id="collectUrl" placeholder="https://example.com" required>
+                  </div>
+                  <div class="form-group">
+                    <label>图标路径</label>
+                    <input type="text" id="collectIcon" placeholder="图标地址（可选）" >
+                  </div>
+                  <div class="form-actions">
+                    <button type="button" class="btn cancel" onclick="clearForm()">取消</button>
+                    <button type="submit" class="btn save" onclick="handleSubmitForFav(event)" id="saveBtn">保存</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+        </div>
+    </form>
+
+    <div class="card-grid" id="cards" ></div>
+
+<!-- 时区浮动框 -->
+<div id="timezone-floating-box" class="timezone-box">
+    <div class="timezone-header">
+        <span>世界时间</span>
+        <button class="timezone-close" onclick="toggleTimezoneBox()">×</button>
+    </div>
+    <div class="timezone-content">
+       <div class="time-item">
+            <span class="time-label">UTC+11</span>
+            <span class="time-label">悉尼</span>
+            <span class="time-value" id="sydney-time">--:--:--</span>
+        </div>
+        <div class="time-item">
+            <span class="time-label">UTC+9</span>
+            <span class="time-label">东京</span>
+            <span class="time-value" id="tokyo-time">--:--:--</span>
+        </div>
+        <div class="time-item">
+            <span class="time-label" style="color: #f00;"> UTC+8</span>
+            <span class="time-label" style="color: #f00;">★北京★</span>
+            <span class="time-value" style="color: #f00;" id="beijing-time">--:--:--</span>
+        </div>
+        <div class="time-item">
+            <span class="time-label">UTC+7</span>
+            <span class="time-label">泰越印</span>
+            <span class="time-value" id="thail-time">--:--:--</span>
+        </div>
+        <div class="time-item">
+            <span class="time-label">UTC+5.30</span>
+            <span class="time-label">印度</span>
+            <span class="time-value" id="indo-time">--:--:--</span>
+        </div>
+       <div class="time-item">
+            <span class="time-label">UTC+1</span>
+            <span class="time-label">巴黎</span>
+            <span class="time-value" id="paris-time">--:--:--</span>
+        </div>       
+       <div class="time-item">
+            <span class="time-label">UTC+1</span>
+            <span class="time-label">(西)马德里</span>
+            <span class="time-value" id="madrid-time">--:--:--</span>
+        </div>       
+        <div class="time-item">
+            <span class="time-label">UTC</span>
+            <span class="time-label">伦敦</span>
+            <span class="time-value" id="london-time">--:--:--</span>
+        </div>
+        <div class="time-item">
+            <span class="time-label">UTC</span>
+            <span class="time-label">(葡)里斯本</span>
+            <span class="time-value" id="lisbon-time">--:--:--</span>
+        </div>
+        <div class="time-item">
+            <span class="time-label">UTC-5</span>
+            <span class="time-label">纽约</span>
+            <span class="time-value" id="newyork-time">--:--:--</span>
+        </div>
+    </div>
+</div>
+</body>
+</html>
