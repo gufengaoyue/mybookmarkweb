@@ -1,2 +1,2 @@
 @echo off
-pythonw server.py
+python server.py
