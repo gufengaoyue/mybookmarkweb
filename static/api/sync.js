@@ -185,7 +185,8 @@
   .jgy-dialog-input .jgy-dialog-title { text-align:center; margin-bottom:14px }
   .jgy-dialog-input .jgy-dialog-msg { text-align:center; margin-bottom:14px; font-size:12.5px }
   .jgy-dialog-input input.jgy-input {
-    width:100%; box-sizing:border-box; padding: 11px 13px; border-radius: 10px;
+    width:100%; min-width:0; max-width:100%; box-sizing:border-box;
+    padding: 11px 13px; border-radius: 10px;
     border:1px solid #dbe3ee; background:#f8fafd; font-size:14px; color:#1e293b;
     outline:none; transition: border-color .18s, box-shadow .18s, background .18s;
   }

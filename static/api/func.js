@@ -285,12 +285,21 @@ function renderTreeNode(node) {
         : '<span class="tree-arrow empty"></span>';
       const kids = (hasChildren && open)
         ? `<div class="group-children">${renderTreeNode(child)}</div>` : '';
+      // 「首页」是保留分组：不给重命名/删除按钮
+      const editable = child.path !== '首页';
+      const deletable = editable && child.path !== '未分组';
+      const renameBtn = editable ? `
+        <span class="group-rename" title="重命名此分组">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M13.5 6.5l3 3"/></svg>
+        </span>` : '';
+      const delBtn = deletable ? `
+        <span class="group-del" title="删除此分组">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6.5 7l1 13h9l1-13"/></svg>
+        </span>` : '';
       return `<div class="group-node${active}" data-path="${escapeAttr(child.path)}">
         ${arrow}<span class="group-label" title="${escapeAttr(child.path)}">${escapeHtml(child.name)}</span>
         <span class="group-count">${child.count}</span>
-        <span class="group-rename" title="重命名此分组">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M13.5 6.5l3 3"/></svg>
-        </span>
+        <span class="group-actions">${renameBtn}${delBtn}</span>
       </div>${kids}`;
     }).join('');
 }
@@ -307,6 +316,15 @@ function renderGroups() {
       renameBtn.onclick = (e) => {
         e.stopPropagation();
         renameGroupPrompt(el.dataset.path);
+      };
+    }
+
+    // 右侧小垃圾桶：删除分组（组内书签转移到「未分组」）
+    const delBtn = el.querySelector('.group-del');
+    if (delBtn) {
+      delBtn.onclick = (e) => {
+        e.stopPropagation();
+        deleteGroupPrompt(el.dataset.path);
       };
     }
 
@@ -401,6 +419,7 @@ async function createGroupPrompt() {
 
 async function renameGroupPrompt(path) {
   if (!window.JGY || !JGY.prompt) return;
+  if (path === '首页') { tip('「首页」是保留分组，不能重命名', 'warn'); return; }
   const newName = await JGY.prompt({
     title: '重命名分组',
     message: `「${path}」下的书签会一起改到新名称`,
@@ -434,6 +453,53 @@ async function renameGroupPrompt(path) {
   } catch (err) {
     console.error(err);
     tip('重命名失败，请重试', 'error');
+  }
+}
+
+async function deleteGroupPrompt(path) {
+  if (!window.JGY || !JGY.confirm) return;
+  if (path === '首页' || path === '未分组') {
+    tip(`「${path}」是保留分组，不能删除`, 'warn');
+    return;
+  }
+  const subGroups = getGroupList().filter(g => g.name.startsWith(path + '/'));
+  if (subGroups.length) {
+    tip(`「${path}」下还有 ${subGroups.length} 个子分组，请先删除子分组`, 'warn');
+    return;
+  }
+  const count = allData.filter(i => normalizeGroup(i.group) === path).length;
+  const ok = await JGY.confirm({
+    title: '删除分组',
+    message: count
+      ? `「${path}」里的 ${count} 条书签会移到「未分组」，分组本身从侧栏移除。`
+      : `「${path}」暂无书签，删除后从侧栏移除。`,
+    confirmText: '删除分组',
+    cancelText: '保留',
+    type: 'danger'
+  });
+  if (!ok) return;
+
+  try {
+    const r = await fetch(groupServer + '/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: path })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { tip(j.error || '删除分组失败', 'error'); return; }
+
+    if (activeGroup === path) activeGroup = j.target || '未分组';
+    const nextExpanded = new Set();
+    expanded.forEach(p => { if (p !== path) nextExpanded.add(p); });
+    expanded = nextExpanded;
+
+    tip(j.moved
+      ? `已删除「${path}」，${j.moved} 条书签移到「${j.target || '未分组'}」`
+      : `已删除「${path}」`, 'success');
+    await loadData();
+  } catch (err) {
+    console.error(err);
+    tip('删除分组失败，请重试', 'error');
   }
 }
 

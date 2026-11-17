@@ -157,6 +157,10 @@ def rename_group():
         new = (body.get('to') or '').strip().strip('/')
         if not old or not new:
             return jsonify({'error': '分组名称不能为空'}), 400
+        if old == '首页':
+            return jsonify({'error': '「首页」是保留分组，不能重命名'}), 400
+        if new == '首页':
+            return jsonify({'error': '不能把分组改成「首页」，该名称是保留分组'}), 400
         if new == old:
             return jsonify({'success': True, 'renamed': 0})
         if len(new) > 60:
@@ -194,6 +198,44 @@ def rename_group():
         return jsonify({'success': True, 'renamed': renamed})
     except Exception as e:
         return jsonify({'error': '重命名失败', 'detail': str(e)}), 500
+
+
+@app.route('/api/groups/delete', methods=['POST'])
+def delete_group():
+    """删除分组：组内书签全部转到「未分组」（没有就自动建）。
+    有子分组时先拒绝，避免误删整棵树。"""
+    try:
+        name = (((request.json or {}).get('name')) or '').strip().strip('/')
+        if not name:
+            return jsonify({'error': '分组名称不能为空'}), 400
+        if name in ('首页', '未分组'):
+            return jsonify({'error': f'「{name}」是保留分组，不能删除'}), 400
+
+        data = load_data()
+        groups = group_names_from_links(data) | set(load_groups())
+        if name not in groups:
+            return jsonify({'error': '分组不存在'}), 404
+
+        children = sorted(g for g in groups if g.startswith(name + '/'))
+        if children:
+            return jsonify({'error': f'「{name}」下还有 {len(children)} 个子分组，请先删除子分组',
+                            'children': children}), 409
+
+        target = '未分组'
+        moved = 0
+        for item in data:
+            g = (item.get('group') or '').strip() or '首页'
+            if g == name:
+                item['group'] = target
+                moved += 1
+
+        groups.discard(name)
+        groups.add(target)
+        save_data(data)
+        save_groups(list(groups) + [x['group'] for x in data])
+        return jsonify({'success': True, 'moved': moved, 'target': target})
+    except Exception as e:
+        return jsonify({'error': '删除分组失败', 'detail': str(e)}), 500
 
 
 

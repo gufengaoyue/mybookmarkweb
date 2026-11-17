@@ -40,6 +40,8 @@ WEBDAV_ROOT = 'https://dav.jianguoyun.com/dav/'
 REMOTE_DIR = 'bookmark_api'          # 云端固定文件夹名
 REMOTE_ICON_DIR = REMOTE_DIR + '/icon'
 REMOTE_BUNDLE = 'icons.zip'          # 图标打包文件：一次 PUT 传完全部图标，避免几百次请求触发限流
+REMOTE_GROUPS = 'groups.json'        # 分组名单（含空分组），体积很小，单独一个小文件
+LOCAL_GROUPS = os.path.join(LOCAL_API_DIR, 'groups.json')
 _ZIP_CACHE = {'key': None, 'bytes': None}
 
 
@@ -447,6 +449,39 @@ def _remote_rel(rel):
     return REMOTE_DIR + '/' + _rel_posix(rel)
 
 
+# ---------------------------------------------------------------- 分组名单（groups.json）
+
+def _read_local_groups():
+    """读本地 groups.json，返回分组名集合（文件不存在/损坏都返回空集合）"""
+    try:
+        if not os.path.exists(LOCAL_GROUPS):
+            return set()
+        with open(LOCAL_GROUPS, encoding='utf-8') as f:
+            raw = json.load(f)
+        return {str(g).strip().strip('/') for g in raw if str(g).strip().strip('/')}
+    except Exception:
+        return set()
+
+
+def _groups_hash(groups):
+    """分组名的稳定指纹（排序后算 sha256，不受文件排版影响）"""
+    payload = json.dumps(sorted(groups), ensure_ascii=False).encode('utf-8')
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _groups_bytes(groups):
+    return json.dumps(sorted(groups), ensure_ascii=False, indent=2).encode('utf-8')
+
+
+def _write_local_groups(groups):
+    """写本地 groups.json（原子替换），尽量不影响文件已存在时的内容顺序"""
+    os.makedirs(LOCAL_API_DIR, exist_ok=True)
+    tmp = LOCAL_GROUPS + '.tmp'
+    with open(tmp, 'wb') as f:
+        f.write(_groups_bytes(groups))
+    os.replace(tmp, LOCAL_GROUPS)
+
+
 # ---------------------------------------------------------------- 备份
 
 def backup_local(tag='backup'):
@@ -457,6 +492,8 @@ def backup_local(tag='backup'):
     links = os.path.join(LOCAL_API_DIR, 'links.json')
     if os.path.exists(links):
         shutil.copy2(links, os.path.join(dest, 'links.json'))
+    if os.path.exists(LOCAL_GROUPS):
+        shutil.copy2(LOCAL_GROUPS, os.path.join(dest, 'groups.json'))
     if os.path.isdir(LOCAL_ICON_DIR):
         for name in os.listdir(LOCAL_ICON_DIR):
             p = os.path.join(LOCAL_ICON_DIR, name)
@@ -628,6 +665,51 @@ def make_plan(resolutions=None, mode='sync'):
         # 双方各自新增、互不冲突 → 写本地并上传合并结果
         links_action = 'merge'
 
+    # ---------- groups.json：分组名单（含空分组），按集合处理 ----------
+    local_groups = _read_local_groups()
+    remote_groups = set()
+    remote_groups_etag = client.head_etag(_remote_rel(REMOTE_GROUPS)) if remote_exists else None
+    remote_has_groups = bool(remote_groups_etag)
+    groups_cache = load_state().get('groups', {})
+
+    if remote_has_groups:
+        if (groups_cache.get('local') == _groups_hash(local_groups)
+                and groups_cache.get('remote') == remote_groups_etag):
+            remote_groups = set(local_groups)      # 两端都没变，省一次 GET
+        else:
+            try:
+                raw = client.download_bytes(_remote_rel(REMOTE_GROUPS))
+                remote_groups = {str(g).strip() for g in json.loads(raw.decode('utf-8')) if str(g).strip()}
+            except WebDAVError as e:
+                if e.status != 404:
+                    raise
+
+    groups_final, groups_action = set(local_groups), 'none'
+    if mode == 'upload':
+        groups_final = set(local_groups)
+        if not remote_has_groups or groups_final != remote_groups:
+            groups_action = 'upload'
+    elif mode == 'download':
+        # 云端有这份文件才以云端为准；云端没有就保留本地，避免把空分组名单误清空
+        if remote_has_groups:
+            groups_final = set(remote_groups)
+            if groups_final != local_groups:
+                groups_action = 'download'
+        else:
+            groups_final = set(local_groups)
+    else:  # sync：并集合并 + 删除传播（界面删掉的分组不再被云端复活）
+        baseline_groups = set(load_state().get('groups_ids', []))
+        merged = set(local_groups) | set(remote_groups)
+        merged -= (baseline_groups - set(local_groups))    # 本地删掉的
+        merged -= (baseline_groups - set(remote_groups))   # 云端删掉的
+        groups_final = merged
+        if not remote_has_groups:
+            groups_action = 'upload' if groups_final else 'none'
+        elif groups_final != remote_groups:
+            groups_action = 'upload'
+        elif groups_final != local_groups:
+            groups_action = 'download'
+
     # ---------- 图标：整体打成一个 zip，一次 PUT 传完 ----------
     # 云端 icon/ 目录里逐个文件 PUT 会产生几百次请求，坚果云必然限流。
     # 这里改成：本地先打包 icons.zip，只上传这一个文件；下载也只需一次 GET。
@@ -680,6 +762,9 @@ def make_plan(resolutions=None, mode='sync'):
     return {
         'links_action': links_action,
         'final_entries': final_entries,
+        'groups_action': groups_action,
+        'groups_final': sorted(groups_final),
+        'groups_remote_exists': remote_has_groups,
         'bundle_action': bundle_action,
         'icons_zip': local_zip,
         'icons_count': len(os.listdir(LOCAL_ICON_DIR)) if os.path.isdir(LOCAL_ICON_DIR) else 0,
@@ -715,8 +800,19 @@ def _rebuild_state(client):
     except Exception:
         bundle_cache = {}
 
+    groups_cache = {}
+    groups_ids = []
+    try:
+        local_groups = _read_local_groups()
+        groups_ids = sorted(local_groups)
+        etag = client.head_etag(_remote_rel(REMOTE_GROUPS)) or ''
+        if local_groups or etag:
+            groups_cache = {'local': _groups_hash(local_groups), 'remote': etag}
+    except Exception:
+        groups_cache = {}
+
     save_state({'files': {}, 'links_ids': links_ids, 'links': links_cache,
-                'bundle': bundle_cache})
+                'bundle': bundle_cache, 'groups': groups_cache, 'groups_ids': groups_ids})
 
 
 def _execute_plan(plan, resolutions, mode):
@@ -757,6 +853,25 @@ def _execute_plan(plan, resolutions, mode):
         with open(local_links_path, 'wb') as f:
             f.write(remote_bytes)
         done['downloaded'].append('links.json')
+
+    # ---------- groups.json（空分组名单，很小，有变化才传/取） ----------
+    ga = plan.get('groups_action', 'none')
+    groups_final = set(plan.get('groups_final') or [])
+    if ga == 'upload' and mode != 'download':
+        try:
+            _write_local_groups(groups_final)
+            client.upload_bytes(_remote_rel(REMOTE_GROUPS), _groups_bytes(groups_final))
+            done['uploaded'].append('groups.json')
+        except WebDAVError as e:
+            done['failed'].append({'path': REMOTE_GROUPS, 'error': str(e)})
+    elif ga == 'download' and mode != 'upload':
+        try:
+            raw = client.download_bytes(_remote_rel(REMOTE_GROUPS))
+            remote_set = {str(g).strip() for g in json.loads(raw.decode('utf-8')) if str(g).strip()}
+            _write_local_groups(remote_set)
+            done['downloaded'].append('groups.json')
+        except WebDAVError as e:
+            done['failed'].append({'path': REMOTE_GROUPS, 'error': str(e)})
 
     # ---------- 图标（整包一次传/一次拉） ----------
     bundle_action = plan.get('bundle_action', 'none')
