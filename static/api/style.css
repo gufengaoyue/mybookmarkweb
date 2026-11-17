@@ -57,7 +57,7 @@ button:hover {
 .card {
     background: var(--card-bg);
     border-radius: 12px;
-    transition: all 0.3s;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
     display: flex;
     align-items: center; /* 图标标题同行 */
     gap: 15px;
@@ -66,6 +66,7 @@ button:hover {
   padding: 15px;
   border-radius: 8px;
   overflow: hidden;
+  will-change: transform;
 }
 
 .card:hover {
@@ -163,28 +164,20 @@ button:hover {
   border-color: #ff4d4f;
 }
 
-/* 添加拖拽相关样式 */
+/* 拖拽样式：被拖的卡片跟随鼠标，其它卡片用 FLIP 平滑让位 */
+/* 拖拽时避免卡片被拖出屏幕产生横向滚动条 */
+body.dragging-active {
+  overflow-x: hidden;
+}
+
 .card.dragging {
-  opacity: 0.5;
-  transform: scale(0.98);
-}
-
-.card.placeholder {
-  border: 2px dashed var(--primary);
-  background: transparent;
-}
-
-@keyframes slide {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(50px); }
-}
-
-.slide-right {
-  animation: slide 0.3s forwards;
-}
-
-.slide-left {
-  animation: slide 0.3s reverse;
+  z-index: 40;
+  cursor: grabbing;
+  pointer-events: none;
+  box-shadow: 0 18px 38px rgba(24, 52, 102, 0.22), 0 4px 10px rgba(24, 52, 102, 0.12);
+  border-radius: 10px;
+  will-change: transform;
+  opacity: 1;
 }
 
 .search-engine-container {

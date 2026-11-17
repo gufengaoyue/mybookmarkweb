@@ -291,6 +291,7 @@ function renderGroups() {
       if (!draggingCardId) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
+      if (typeof aimFollow === 'function' && dragCtx) aimFollow(e);  // 卡片继续跟着鼠标走
       el.classList.add('drop-target');
     });
     el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
@@ -408,84 +409,189 @@ function renderCards() {
     initDragAndDrop();   // 每次重新渲染卡片都重新绑定拖拽（否则切分组/搜索后拖拽失效）
 }
 
+// ==================== 拖拽：自定义拖拽影像 + FLIP 让位动画 ====================
+let dragCtx = null;      // { card, grabDX, grabDY }
+let follow = null;       // { raf, curX, curY, tx, ty }
+
+// 浏览器要求 setDragImage 的节点必须在文档里，这里放一个屏幕外的透明 1px 方块
+function dragGhostElement() {
+  let el = document.getElementById('drag-ghost');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'drag-ghost';
+    el.style.cssText = 'position:fixed;top:-1000px;left:-1000px;width:1px;height:1px;opacity:0;pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
 function initDragAndDrop() {
-  let draggedCard = null;
-  let originalIndex = 0;
+  const wrap = document.getElementById('cards');
+  if (!wrap) return;
 
-  document.querySelectorAll('.card').forEach(card => {
+  wrap.querySelectorAll('.card').forEach(card => {
     card.draggable = true;
+    card.addEventListener('dragstart', onCardDragStart);
+    card.addEventListener('dragend', onCardDragEnd);
+  });
 
-    // 拖拽开始
-    card.addEventListener('dragstart', e => {
-      draggedCard = card;
-      draggingCardId = card.dataset.id;
-      groupDropDone = false;
-      originalIndex = Array.from(card.parentNode.children).indexOf(card);
-      card.classList.add('dragging');
-      e.dataTransfer.setData('text/plain', card.dataset.id);
-      e.dataTransfer.effectAllowed = 'move';
-    });
+  // 容器级监听（用属性赋值，避免重复绑定）
+  wrap.ondragover = onCardsDragOver;
+  wrap.ondrop = e => { e.preventDefault(); };
+}
 
-    // 拖拽结束
-    card.addEventListener('dragend', () => {
-      card.classList.remove('dragging');
-      const dropped = groupDropDone;
-      draggingCardId = null;
-      groupDropDone = false;
-      // 拖到分组上已经改成“换分组”了，就不要再重排顺序
-      if (!dropped) saveNewOrder();
-    });
+function onCardDragStart(e) {
+  const card = e.currentTarget;
+  const rect = card.getBoundingClientRect();
+  dragCtx = { card, grabDX: e.clientX - rect.left, grabDY: e.clientY - rect.top };
+  follow = { raf: null, curX: 0, curY: 0, tx: 0, ty: 0 };
+  draggingCardId = card.dataset.id;
+  groupDropDone = false;
 
-    // 拖拽经过
-    card.addEventListener('dragover', e => {
-      e.preventDefault();
-      if (draggedCard === card) return;
-      if (filterText) return;   // 搜索状态下不重排，避免顺序错乱
+  card.classList.add('dragging');
+  card.style.transition = 'none';
+  card.style.transform = 'translate3d(0, 0, 0) scale(1.03)';
+  document.body.classList.add('dragging-active');
 
-      const rect = card.getBoundingClientRect();
-      const midX = rect.left + rect.width / 2;
+  // 关掉浏览器默认那个糊图影子，改成卡片本体跟着鼠标走
+  e.dataTransfer.setDragImage(dragGhostElement(), 0, 0);
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', card.dataset.id);
+}
 
-      if (e.clientX < midX) {
-        card.classList.add('slide-left');
-        card.parentNode.insertBefore(draggedCard, card);
-      } else {
-        card.classList.add('slide-right');
-        card.parentNode.insertBefore(draggedCard, card.nextSibling);
-      }
-    });
+function onCardsDragOver(e) {
+  if (!dragCtx) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
 
-    // 动画结束清理
-    card.addEventListener('animationend', () => {
-      card.classList.remove('slide-left', 'slide-right');
+  aimFollow(e);
+  if (filterText) return;          // 搜索结果不参与重排
+  applyInsertion(e);
+}
+
+// 记录“应该贴到哪儿”，由 rAF 缓动追上去（dragover 触发频率低，直接跟会发涩）
+function aimFollow(e) {
+  const card = dragCtx.card;
+  const r = card.getBoundingClientRect();
+  const baseLeft = r.left - follow.curX;    // 去掉当前位移后的原始布局位置
+  const baseTop = r.top - follow.curY;
+  follow.tx = e.clientX - dragCtx.grabDX - baseLeft;
+  follow.ty = e.clientY - dragCtx.grabDY - baseTop;
+  if (!follow.raf) follow.raf = requestAnimationFrame(stepFollow);
+}
+
+function stepFollow() {
+  if (!dragCtx || !follow) return;
+  follow.curX += (follow.tx - follow.curX) * 0.22;
+  follow.curY += (follow.ty - follow.curY) * 0.22;
+  dragCtx.card.style.transform =
+    `translate3d(${follow.curX.toFixed(2)}px, ${follow.curY.toFixed(2)}px, 0) scale(1.03)`;
+
+  // 已经很接近目标就停，省电
+  if (Math.abs(follow.tx - follow.curX) < 0.4 && Math.abs(follow.ty - follow.curY) < 0.4) {
+    follow.curX = follow.tx; follow.curY = follow.ty;
+    dragCtx.card.style.transform =
+      `translate3d(${follow.curX.toFixed(2)}px, ${follow.curY.toFixed(2)}px, 0) scale(1.03)`;
+    follow.raf = null;
+    return;
+  }
+  follow.raf = requestAnimationFrame(stepFollow);
+}
+
+// 计算应该插到第几个位置（卡片是网格排列，先比行、再比列）
+function computeInsertIndex(e) {
+  const wrap = dragCtx.card.parentNode;
+  const others = Array.from(wrap.querySelectorAll('.card')).filter(c => c !== dragCtx.card);
+  for (let i = 0; i < others.length; i++) {
+    const r = others[i].getBoundingClientRect();
+    if (r.bottom < e.clientY - r.height * 0.15) continue;      // 整行都在鼠标上方
+    if (e.clientY < r.top) return { idx: i, node: others[i] };  // 插在这一行前面
+    if (e.clientY <= r.bottom && e.clientX < r.left + r.width / 2) {
+      return { idx: i, node: others[i] };                       // 同一行，插在左半边卡片前
+    }
+  }
+  return { idx: others.length, node: null };
+}
+
+function applyInsertion(e) {
+  const wrap = dragCtx.card.parentNode;
+  const { idx, node } = computeInsertIndex(e);
+  const currentIdx = Array.from(wrap.children).indexOf(dragCtx.card);
+  if (currentIdx === idx) return;
+
+  // FLIP：先记录其它卡片的旧位置，动完 DOM 后再从旧位置滑到新位置
+  const cards = Array.from(wrap.querySelectorAll('.card')).filter(c => c !== dragCtx.card);
+  const firstRects = new Map(cards.map(c => [c, c.getBoundingClientRect()]));
+
+  if (node) wrap.insertBefore(dragCtx.card, node);
+  else wrap.appendChild(dragCtx.card);
+
+  cards.forEach(c => {
+    const before = firstRects.get(c);
+    const after = c.getBoundingClientRect();
+    const dx = before.left - after.left;
+    const dy = before.top - after.top;
+    if (!dx && !dy) return;
+    c.style.transition = 'none';
+    c.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+    c.style.zIndex = '1';
+    requestAnimationFrame(() => {
+      c.style.transition = 'transform 0.26s cubic-bezier(0.22, 0.75, 0.25, 1)';
+      c.style.transform = '';
+      c.style.zIndex = '';
     });
   });
 
-  // 保存新顺序到服务器（只重排，服务端不会再删掉没传到的条目）
-  async function saveNewOrder() {
-    if (filterText) return;   // 搜索结果是跨分组的混合列表，重排没有意义
-    // 把当前分组卡片的新顺序填回它们在总列表里各自的位置，其余条目保持原样
-    const visibleIds = Array.from(document.querySelectorAll('.card')).map(c => c.dataset.id);
-    let k = 0;
-    const fullIds = allData.map(item => {
-      if (normalizeGroup(item.group) === activeGroup) {
-        return visibleIds[k++] || String(item.id);
-      }
-      return String(item.id);
-    });
+  aimFollow(e);   // DOM 变了，重新贴合鼠标目标
+}
 
-    try {
-      const response = await fetch(server + '/order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nod: fullIds })
-      });
+function onCardDragEnd() {
+  if (!dragCtx) return;
+  const card = dragCtx.card;
+  if (follow && follow.raf) cancelAnimationFrame(follow.raf);
 
-      if (!response.ok) throw new Error('保存失败');
-      loadData(); // 刷新数据确保一致性
-    } catch (error) {
-      console.error('保存顺序失败:', error);
-      tip('顺序保存失败，请重试', 'error');
+  // 从“跟随位置”滑回它在网格里的真实位置
+  card.classList.remove('dragging');
+  document.body.classList.remove('dragging-active');
+  card.style.transition = 'transform 0.24s cubic-bezier(0.22, 0.75, 0.25, 1)';
+  card.style.transform = 'translate3d(0, 0, 0) scale(1)';
+  setTimeout(() => {
+    card.style.transition = '';
+    card.style.transform = '';
+  }, 260);
+
+  const dropped = groupDropDone;
+  dragCtx = null;
+  follow = null;
+  draggingCardId = null;
+  groupDropDone = false;
+  // 拖到分组上已经改成“换分组”了，就不要再重排顺序
+  if (!dropped) saveNewOrder();
+}
+
+// 保存新顺序到服务器（只重排，服务端不会再删掉没传到的条目）
+async function saveNewOrder() {
+  if (filterText) return;   // 搜索结果是跨分组的混合列表，重排没有意义
+  const visibleIds = Array.from(document.querySelectorAll('.card')).map(c => c.dataset.id);
+  let k = 0;
+  const fullIds = allData.map(item => {
+    if (normalizeGroup(item.group) === activeGroup) {
+      return visibleIds[k++] || String(item.id);
     }
+    return String(item.id);
+  });
+
+  try {
+    const response = await fetch(server + '/order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nod: fullIds })
+    });
+    if (!response.ok) throw new Error('保存失败');
+    loadData();
+  } catch (error) {
+    console.error('保存顺序失败:', error);
+    tip('顺序保存失败，请重试', 'error');
   }
 }
 

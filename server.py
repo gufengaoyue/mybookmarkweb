@@ -45,10 +45,38 @@ def load_data():
         return json.load(f)
 
 
+def _backup_data_file(max_keep=20):
+    """写盘前先把现有 links.json 复制一份到 backups/，只保留最近 max_keep 份。"""
+    try:
+        if not os.path.exists(DATA_FILE):
+            return None
+        backup_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backups')
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        dst = os.path.join(backup_dir, 'links_auto_%s.json' % stamp)
+        if not os.path.exists(dst):
+            with open(DATA_FILE, encoding='utf-8') as src, open(dst, 'w', encoding='utf-8') as out:
+                out.write(src.read())
+        autos = sorted(name for name in os.listdir(backup_dir) if name.startswith('links_auto_'))
+        for old in autos[:-max_keep]:
+            try:
+                os.remove(os.path.join(backup_dir, old))
+            except OSError:
+                pass
+        return dst
+    except Exception:
+        return None
+
+
 def save_data(data):
-    """保存数据到JSON文件（UTF-8，保留中文）"""
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+    """保存数据到JSON文件（UTF-8，保留中文）。
+    先写临时文件再原子替换，避免写一半留下坏文件；写之前自动备份。"""
+    _backup_data_file()
+    tmp = DATA_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, DATA_FILE)
+
 
 
 @app.route('/api/links/save', methods=['POST'])
@@ -414,7 +442,7 @@ def _run_tabs_script(args):
 @app.route('/api/links/order', methods=['POST'])
 def update_order():
     """调整顺序。只做重排，绝不删除条目：
-    传来的 id 按给定顺序排前面，没传到的条目按原顺序接在后面。"""
+    把传来的 id 按新顺序填回它们原本占用的位置，没传到的条目位置不动。"""
     try:
         body = request.json or {}
         new_order = body.get('nod') or []
@@ -424,25 +452,34 @@ def update_order():
 
         data = load_data()
         by_id = {str(x.get('id')): x for x in data}
-        wanted = [str(i) for i in new_order if str(i) in by_id]
 
-        # 把这些 id 按新顺序填回它们原本占用的位置，其余条目位置不动。
-        # 这样即使前端只传了当前分组的卡片，也不会影响其它分组、更不会丢数据。
-        slots = [i for i, x in enumerate(data) if str(x.get('id')) in set(wanted)]
-        slots = slots[:len(wanted)]
+        # 去重 + 只保留真实存在的 id（前端可能传来重复或过期的 id）
+        wanted, seen = [], set()
+        for key in new_order:
+            key = str(key)
+            if key in by_id and key not in seen:
+                seen.add(key)
+                wanted.append(key)
+
+        slots = [i for i, x in enumerate(data) if str(x.get('id')) in seen]
         rebuilt = [None] * len(data)
         for slot, key in zip(slots, wanted):
             rebuilt[slot] = by_id[key]
-        rest = iter([x for x in data if str(x.get('id')) not in set(wanted)])
+        rest = iter([x for x in data if str(x.get('id')) not in seen])
         for i in range(len(rebuilt)):
             if rebuilt[i] is None:
                 rebuilt[i] = next(rest, None)
         ordered = [x for x in rebuilt if x is not None]
 
+        # 硬保护：条数只许多不许少，一旦算错就放弃写盘，避免再次丢数据
+        if len(ordered) != len(data):
+            return jsonify({'error': '顺序计算结果条数异常，已放弃写入',
+                            'expected': len(data), 'got': len(ordered)}), 500
+
         save_data(ordered)
         return jsonify(ordered)
     except Exception as e:
-        return jsonify({'error': '顺序更新失败'}), 500
+        return jsonify({'error': '顺序更新失败', 'detail': str(e)}), 500
 
 
 @app.route('/api/links/<id>', methods=['GET'])
