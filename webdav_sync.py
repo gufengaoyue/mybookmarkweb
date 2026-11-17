@@ -764,7 +764,8 @@ def _execute_plan(plan, resolutions, mode):
         bundle_action = 'upload' if resolutions.get('icons.zip') == 'local' else 'download'
 
     PROGRESS.update({'running': True, 'total': 1 if bundle_action in ('upload', 'download') else 0,
-                     'done': 0, 'message': '正在处理图标包…'})
+                     'done': 0,
+                     'message': '图标包已是最新，无需处理' if bundle_action == 'none' else '正在处理图标包…'})
     rate_limited = None
 
     if bundle_action == 'upload' and mode != 'download':
@@ -819,7 +820,11 @@ def _execute_plan(plan, resolutions, mode):
     done['remote_exists'] = True
     PROGRESS['running'] = False
     PROGRESS['done'] = PROGRESS['total']
-    PROGRESS['message'] = '同步完成'
+    if not done['uploaded'] and not done['downloaded']:
+        PROGRESS['message'] = '已是最新，无需上传/下载'
+    else:
+        PROGRESS['message'] = {'upload': '上传完成',
+                               'download': '下载完成'}.get(mode, '同步完成')
     return done
 
 
