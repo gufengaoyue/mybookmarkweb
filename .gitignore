@@ -15,6 +15,10 @@ static/api/links.json
 static/api/links.json.bak
 static/api/links.json.bak*
 static/api/links.json.bak_*
+static/api/links.json.tmp
+# 分组注册表（空分组名单，也是个人数据）
+static/api/groups.json
+static/api/groups.json.tmp
 static/api/icon/
 # 若要给别人演示，可保留一个示例文件：
 # static/api/links.example.json

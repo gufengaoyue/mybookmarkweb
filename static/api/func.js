@@ -1,9 +1,11 @@
 ﻿    // 表单提交处理
 
 let server = 'http://localhost:3000/api/links';
+let groupServer = 'http://localhost:3000/api/groups';
 
 // ---------- 分组 / 筛选状态 ----------
 let allData = [];
+let allGroups = [];        // 服务端分组注册表（含空分组）
 let activeGroup = '首页';
 let filterText = '';
 let expanded = new Set();
@@ -173,8 +175,15 @@ function handleSubmit(e) {
 
 async function loadData() {
     try {
-      const response = await fetch(server);
-      allData = await response.json();
+      const [linksResp, groupsResp] = await Promise.all([
+        fetch(server),
+        fetch(groupServer).catch(() => null)
+      ]);
+      allData = await linksResp.json();
+      if (groupsResp && groupsResp.ok) {
+        const gs = await groupsResp.json();
+        allGroups = Array.isArray(gs) ? gs : [];
+      }
       // 默认全部收起子分组，只显示一级分组；选中分组时会自动展开其父链
       ensureExpanded(activeGroup);
       renderGroups();
@@ -224,6 +233,8 @@ function groupSort(a, b) {
 
 function getGroupList() {
   const map = {};
+  // 注册表里的分组（含空分组）先占位，保证 0 条的分组也显示
+  allGroups.forEach(g => { map[normalizeGroup(g)] = map[normalizeGroup(g)] || 0; });
   allData.forEach(item => {
     const g = normalizeGroup(item.group);
     map[g] = (map[g] || 0) + 1;
@@ -233,6 +244,7 @@ function getGroupList() {
 
 function buildGroupTree() {
   const counts = {};
+  allGroups.forEach(g => { counts[normalizeGroup(g)] = counts[normalizeGroup(g)] || 0; });
   allData.forEach(item => {
     const g = normalizeGroup(item.group);
     counts[g] = (counts[g] || 0) + 1;
@@ -276,6 +288,9 @@ function renderTreeNode(node) {
       return `<div class="group-node${active}" data-path="${escapeAttr(child.path)}">
         ${arrow}<span class="group-label" title="${escapeAttr(child.path)}">${escapeHtml(child.name)}</span>
         <span class="group-count">${child.count}</span>
+        <span class="group-rename" title="重命名此分组">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M13.5 6.5l3 3"/></svg>
+        </span>
       </div>${kids}`;
     }).join('');
 }
@@ -285,6 +300,15 @@ function renderGroups() {
   nav.innerHTML = renderTreeNode(buildGroupTree());
   nav.querySelectorAll('.group-node').forEach(el => {
     el.onclick = () => setActiveGroup(el.dataset.path);
+
+    // 右侧小铅笔：重命名分组（不切换当前分组）
+    const renameBtn = el.querySelector('.group-rename');
+    if (renameBtn) {
+      renameBtn.onclick = (e) => {
+        e.stopPropagation();
+        renameGroupPrompt(el.dataset.path);
+      };
+    }
 
     // 把卡片拖到分组上 → 改变所属分组
     el.addEventListener('dragover', e => {
@@ -347,6 +371,72 @@ async function moveCardToGroup(cardId, targetGroup) {
   }
 }
 
+// ---------- 分组的新建 / 重命名 ----------
+async function createGroupPrompt() {
+  if (!window.JGY || !JGY.prompt) return;
+  const name = await JGY.prompt({
+    title: '新建分组',
+    message: '用 / 可以建子分组，例如「学习/英语」',
+    placeholder: '输入分组名称',
+    confirmText: '创建',
+    type: 'info'
+  });
+  if (!name) return;
+  try {
+    const r = await fetch(groupServer, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { tip(j.error || '新建分组失败', 'error'); return; }
+    if (Array.isArray(j.groups)) allGroups = j.groups;
+    tip(`已新建分组「${name}」`, 'success');
+    setActiveGroup(name);
+  } catch (err) {
+    console.error(err);
+    tip('新建分组失败，请重试', 'error');
+  }
+}
+
+async function renameGroupPrompt(path) {
+  if (!window.JGY || !JGY.prompt) return;
+  const newName = await JGY.prompt({
+    title: '重命名分组',
+    message: `「${path}」下的书签会一起改到新名称`,
+    value: path,
+    confirmText: '保存',
+    type: 'info'
+  });
+  if (!newName || newName === path) return;
+  try {
+    const r = await fetch(groupServer + '/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: path, to: newName })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { tip(j.error || '重命名失败', 'error'); return; }
+
+    // 当前选中分组 / 展开状态跟着改名
+    if (activeGroup === path) activeGroup = newName;
+    else if (activeGroup.startsWith(path + '/')) activeGroup = newName + activeGroup.slice(path.length);
+    const nextExpanded = new Set();
+    expanded.forEach(p => {
+      if (p === path) nextExpanded.add(newName);
+      else if (p.startsWith(path + '/')) nextExpanded.add(newName + p.slice(path.length));
+      else nextExpanded.add(p);
+    });
+    expanded = nextExpanded;
+
+    tip(`已把「${path}」改名为「${newName}」${j.renamed ? `（${j.renamed} 条书签同步更新）` : ''}`, 'success');
+    await loadData();
+  } catch (err) {
+    console.error(err);
+    tip('重命名失败，请重试', 'error');
+  }
+}
+
 function setActiveGroup(name) {
   activeGroup = normalizeGroup(name);
   ensureExpanded(activeGroup);
@@ -384,7 +474,10 @@ function renderCards() {
     if (totalEl) totalEl.textContent = `${getGroupList().length} 组 · ${allData.length} 条`;
 
     if (!items.length) {
-      container.innerHTML = '<div class="empty-tip">暂无匹配书签</div>';
+      const msg = filterText
+        ? '没有找到匹配的书签'
+        : `「${activeGroup}」还没有书签，把卡片拖进来就能收进这个分组`;
+      container.innerHTML = `<div class="empty-tip">${escapeHtml(msg)}</div>`;
       return;
     }
     container.innerHTML = items.map(item => {

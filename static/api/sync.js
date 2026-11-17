@@ -180,6 +180,23 @@
   .jgy-btn.confirm-danger { background: linear-gradient(135deg,#f43f5e,#e11d48) }
   .jgy-btn.confirm-info { background: linear-gradient(135deg,#4f46e5,#2563eb) }
 
+  /* ---------- 输入框对话框（新建/重命名分组用） ---------- */
+  .jgy-dialog-input { padding: 22px 22px 4px; text-align:left }
+  .jgy-dialog-input .jgy-dialog-title { text-align:center; margin-bottom:14px }
+  .jgy-dialog-input .jgy-dialog-msg { text-align:center; margin-bottom:14px; font-size:12.5px }
+  .jgy-dialog-input input.jgy-input {
+    width:100%; box-sizing:border-box; padding: 11px 13px; border-radius: 10px;
+    border:1px solid #dbe3ee; background:#f8fafd; font-size:14px; color:#1e293b;
+    outline:none; transition: border-color .18s, box-shadow .18s, background .18s;
+  }
+  .jgy-dialog-input input.jgy-input:focus {
+    border-color:#93b4f7; background:#fff;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.14);
+  }
+  .jgy-dialog-input .jgy-err {
+    color:#e11d48; font-size:12px; min-height:16px; margin-top:6px;
+  }
+
   /* ---------- Toast ---------- */
   .jgy-toast-wrap {
     position: fixed; top: 22px; left: 50%; transform: translateX(-50%);
@@ -262,6 +279,60 @@
       }
       overlay.querySelector('.cancel').onclick = () => close(false);
       overlay.querySelector('.confirm-' + type).onclick = () => close(true);
+    });
+  }
+
+  // ---------- 输入框对话框（Promise，返回输入的字符串或 null）
+  function promptDialog(options) {
+    const {
+      title = '请输入', message = '', value = '',
+      placeholder = '', confirmText = '确定', cancelText = '取消', type = 'info',
+    } = options || {};
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'jgy-overlay';
+      overlay.innerHTML = `
+        <div class="jgy-dialog">
+          <div class="jgy-dialog-input">
+            <div class="jgy-dialog-title"></div>
+            <div class="jgy-dialog-msg"></div>
+            <input type="text" class="jgy-input" spellcheck="false" autocomplete="off">
+            <div class="jgy-err"></div>
+          </div>
+          <div class="jgy-dialog-actions">
+            <button class="jgy-btn cancel">${cancelText}</button>
+            <button class="jgy-btn confirm-${type}">${confirmText}</button>
+          </div>
+        </div>`;
+      overlay.querySelector('.jgy-dialog-title').textContent = title;
+      const msgEl = overlay.querySelector('.jgy-dialog-msg');
+      if (message) msgEl.textContent = message; else msgEl.remove();
+      const input = overlay.querySelector('input.jgy-input');
+      input.placeholder = placeholder;
+      input.value = value;
+      document.body.appendChild(overlay);
+
+      function close(val) {
+        overlay.style.animation = 'jgy-fade .18s reverse';
+        setTimeout(() => overlay.remove(), 160);
+        resolve(val);
+      }
+      const submit = () => {
+        const v = input.value.trim();
+        if (!v) {
+          overlay.querySelector('.jgy-err').textContent = '不能为空';
+          input.focus();
+          return;
+        }
+        close(v);
+      };
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); submit(); }
+        if (e.key === 'Escape') { e.preventDefault(); close(null); }
+      });
+      overlay.querySelector('.cancel').onclick = () => close(null);
+      overlay.querySelector('.confirm-' + type).onclick = submit;
+      setTimeout(() => { input.focus(); input.select(); }, 30);
     });
   }
 
@@ -661,5 +732,5 @@
   });
 
   // 对外暴露
-  window.JGY = { confirm: confirmDialog, toast };
+  window.JGY = { confirm: confirmDialog, toast, prompt: promptDialog };
 })();

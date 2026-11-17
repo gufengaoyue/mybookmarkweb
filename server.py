@@ -78,6 +78,126 @@ def save_data(data):
     os.replace(tmp, DATA_FILE)
 
 
+# ---------------- 分组注册表（让空分组也能存在、能显示、能改名） ----------------
+GROUPS_FILE = 'static/api/groups.json'
+
+
+def load_groups():
+    """读取分组注册表（只存分组名，含空分组）"""
+    try:
+        if not os.path.exists(GROUPS_FILE):
+            return []
+        with open(GROUPS_FILE, encoding='utf-8') as f:
+            raw = json.load(f)
+        return [g.strip() for g in raw if isinstance(g, str) and g.strip()]
+    except Exception:
+        return []
+
+
+def save_groups(groups):
+    """写分组注册表：去重去空，UTF-8，先写临时文件再替换"""
+    seen, cleaned = set(), []
+    for g in groups or []:
+        g = (g or '').strip().strip('/')
+        if not g or g in seen:
+            continue
+        seen.add(g)
+        cleaned.append(g)
+    tmp = GROUPS_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(cleaned, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, GROUPS_FILE)
+    return cleaned
+
+
+def group_names_from_links(data):
+    """links.json 里出现过的分组（空值归到首页）"""
+    names = set()
+    for item in data or []:
+        g = (item.get('group') or '').strip() or '首页'
+        names.add(g)
+    return names
+
+
+@app.route('/api/groups', methods=['GET'])
+def list_groups():
+    """返回全部分组名（注册表 + links.json 里实际用到的）"""
+    try:
+        names = group_names_from_links(load_data()) | set(load_groups())
+        return jsonify(sorted(names))
+    except Exception as e:
+        return jsonify({'error': '读取分组失败', 'detail': str(e)}), 500
+
+
+@app.route('/api/groups', methods=['POST'])
+def create_group():
+    """新建（空白）分组"""
+    try:
+        name = ((request.json or {}).get('name') or '').strip().strip('/')
+        if not name:
+            return jsonify({'error': '分组名称不能为空'}), 400
+        if len(name) > 60:
+            return jsonify({'error': '分组名称太长'}), 400
+        data = load_data()
+        existing = group_names_from_links(data) | set(load_groups())
+        if name in existing:
+            return jsonify({'error': '分组已存在', 'groups': sorted(existing)}), 409
+        groups = save_groups(list(load_groups()) + [name])
+        return jsonify({'success': True, 'groups': sorted(set(groups) | group_names_from_links(data))})
+    except Exception as e:
+        return jsonify({'error': '新建分组失败', 'detail': str(e)}), 500
+
+
+@app.route('/api/groups/rename', methods=['POST'])
+def rename_group():
+    """分组改名：同步改掉所有条目，子分组（父/子）一起改"""
+    try:
+        body = request.json or {}
+        old = (body.get('from') or '').strip().strip('/')
+        new = (body.get('to') or '').strip().strip('/')
+        if not old or not new:
+            return jsonify({'error': '分组名称不能为空'}), 400
+        if new == old:
+            return jsonify({'success': True, 'renamed': 0})
+        if len(new) > 60:
+            return jsonify({'error': '分组名称太长'}), 400
+
+        data = load_data()
+        old_set = group_names_from_links(data) | set(load_groups())
+        if old not in old_set:
+            return jsonify({'error': '分组不存在'}), 404
+        if new in old_set:
+            return jsonify({'error': '目标分组已存在'}), 409
+
+        renamed = 0
+        for item in data:
+            g = (item.get('group') or '').strip() or '首页'
+            if g == old:
+                item['group'] = new
+                renamed += 1
+            elif g.startswith(old + '/'):
+                item['group'] = new + g[len(old):]
+                renamed += 1
+
+        # 注册表里的父分组与子分组一起改名
+        groups = []
+        for g in load_groups():
+            if g == old:
+                groups.append(new)
+            elif g.startswith(old + '/'):
+                groups.append(new + g[len(old):])
+            else:
+                groups.append(g)
+
+        save_data(data)
+        save_groups(groups + [new] + [x['group'] for x in data])
+        return jsonify({'success': True, 'renamed': renamed})
+    except Exception as e:
+        return jsonify({'error': '重命名失败', 'detail': str(e)}), 500
+
+
+
+
 
 @app.route('/api/links/save', methods=['POST'])
 def save_links():
