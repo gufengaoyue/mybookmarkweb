@@ -13,6 +13,8 @@ backups/
 # ============================================================
 static/api/links.json
 static/api/links.json.bak
+static/api/links.json.bak*
+static/api/links.json.bak_*
 static/api/icon/
 # 若要给别人演示，可保留一个示例文件：
 # static/api/links.example.json

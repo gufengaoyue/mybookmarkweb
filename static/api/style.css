@@ -57,7 +57,6 @@ button:hover {
 .card {
     background: var(--card-bg);
     border-radius: 12px;
-    padding: 10px 10px 10px 10px;
     transition: all 0.3s;
     display: flex;
     align-items: center; /* 图标标题同行 */
@@ -66,22 +65,37 @@ button:hover {
   background: #f0faff;
   padding: 15px;
   border-radius: 8px;
-  transition: all 0.3s;
+  overflow: hidden;
 }
 
 .card:hover {
-    background: #b2ebf2; /* 悬停加深 */
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    padding:  10px 20px 10px 20px; /* 增加内边距 */
+    background: #e3f6fb;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.12);
 }
 
 .card-content {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow: hidden;
+}
+
+.card-link {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    text-decoration: none;
+    color: inherit;
 }
 
 .card-icon {
     width: 40px;
     height: 40px;
+    flex-shrink: 0;
     object-fit: contain;
     display: none; /* 默认隐藏 */
 }
@@ -89,6 +103,18 @@ button:hover {
 .card-title {
     margin: 0;
     font-size: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.card-url {
+    font-size: 11px;
+    line-height: 1.3;
+    color: #8494ad;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* 悬停显示按钮 */
@@ -178,3 +204,240 @@ button:hover {
     border: 1px solid #ddd;
     text-align: center;
 }
+
+/* ---------- 侧边栏分组 ---------- */
+.app-layout {
+    display: flex;
+    gap: 16px;
+    padding: 0 20px;
+    align-items: flex-start;
+}
+
+.sidebar {
+    width: 232px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 12px;
+    max-height: calc(100vh - 24px);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* 搜索框独立在分组框之外，不随分组列表滚动 */
+.sidebar-search {
+    flex-shrink: 0;
+}
+
+.filter-input {
+    width: 100%;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid #dbe6f7;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(45, 106, 226, 0.08);
+    box-sizing: border-box;
+    font-size: 14px;
+    color: #333;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.filter-input:focus {
+    border-color: var(--primary, #2d6ae2);
+    box-shadow: 0 0 0 3px rgba(45, 106, 226, 0.12);
+}
+
+.filter-input::placeholder {
+    color: #9aa8bd;
+}
+
+/* 分组面板：独立卡片容器，自身滚动，搜索框始终固定在上方 */
+.group-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border: 1px solid #e4edfb;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(45, 106, 226, 0.07);
+    overflow: hidden;
+}
+
+.group-panel-header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px 8px 14px;
+    border-bottom: 1px solid #eef3fb;
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.group-panel-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #2d6ae2;
+    letter-spacing: 0.5px;
+}
+
+.group-panel-total {
+    font-size: 12px;
+    color: #8b9ab4;
+}
+
+.group-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+}
+
+.group-node {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    font-size: 14px;
+    color: #3c4a5f;
+    transition: background-color 0.18s, border-color 0.18s, color 0.18s;
+}
+
+.group-node:hover {
+    background: #eef5ff;
+}
+
+.group-node.active {
+    background: linear-gradient(90deg, #2d6ae2 0%, #4a83ee 100%);
+    border-left-color: #1c4fbe;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(45, 106, 226, 0.25);
+}
+
+.group-node.active .group-count {
+    color: #dbe8ff;
+}
+
+.group-node.active .tree-arrow::before {
+    border-top-color: rgba(255, 255, 255, 0.85);
+    border-left-color: transparent;
+}
+
+.tree-arrow {
+    width: 14px;
+    flex-shrink: 0;
+    position: relative;
+    cursor: pointer;
+}
+
+.tree-arrow::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 4px solid transparent;
+    border-left-color: #8b9ab4;
+}
+
+.tree-arrow.open::before {
+    border-left-color: transparent;
+    border-top-color: #8b9ab4;
+}
+
+.tree-arrow.empty {
+    cursor: default;
+}
+
+.tree-arrow.empty::before {
+    display: none;
+}
+
+.tree-arrow.open.empty::before {
+    display: none;
+}
+
+.group-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.group-count {
+    flex-shrink: 0;
+    min-width: 18px;
+    text-align: right;
+    font-size: 12px;
+    color: #8b9ab4;
+}
+
+.group-children {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    position: relative;
+}
+
+.group-children::before {
+    content: '';
+    position: absolute;
+    left: 12px;
+    top: 2px;
+    bottom: 2px;
+    width: 1px;
+    background: #e6eefb;
+}
+
+.group-children .group-node {
+    padding-left: 24px;
+}
+
+.group-children .group-children .group-node {
+    padding-left: 38px;
+}
+
+.group-children .group-children::before {
+    left: 26px;
+}
+
+.main-content {
+    flex: 1;
+    min-width: 0;
+    padding-right: 285px;
+}
+
+body.timezone-hidden .main-content {
+    padding-right: 0;
+}
+
+@media (max-width: 1024px) {
+    .main-content {
+        padding-right: 0;
+    }
+}
+
+.empty-tip {
+    color: #999;
+    padding: 40px 0;
+    text-align: center;
+}
+
+#collectGroup {
+    flex: 1 1 auto;
+    min-width: 320px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fff;
+}
+

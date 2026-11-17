@@ -5,6 +5,7 @@ function toggleTimezoneBox() {
     const box = document.getElementById('timezone-floating-box');
     timezoneBoxVisible = !timezoneBoxVisible;
     box.style.display = timezoneBoxVisible ? 'block' : 'none';
+    document.body.classList.toggle('timezone-hidden', !timezoneBoxVisible);
 }
 
 function updateWorldTime() {

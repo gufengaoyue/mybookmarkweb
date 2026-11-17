@@ -13,13 +13,17 @@
 
 import base64
 import hashlib
+import io
 import json
 import os
+import random
 import shutil
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime
 
 # ---------------------------------------------------------------- 常量配置
@@ -35,8 +39,75 @@ BACKUP_DIR = os.path.join(BASE_DIR, 'backups')
 WEBDAV_ROOT = 'https://dav.jianguoyun.com/dav/'
 REMOTE_DIR = 'bookmark_api'          # 云端固定文件夹名
 REMOTE_ICON_DIR = REMOTE_DIR + '/icon'
+REMOTE_BUNDLE = 'icons.zip'          # 图标打包文件：一次 PUT 传完全部图标，避免几百次请求触发限流
+_ZIP_CACHE = {'key': None, 'bytes': None}
+
+
+def _icons_fingerprint():
+    """图标目录的轻量指纹（文件数、总字节、最后修改时间），用于判断是否需要重打包。"""
+    count = total = 0
+    newest = 0.0
+    if not os.path.isdir(LOCAL_ICON_DIR):
+        return (0, 0, 0.0)
+    for name in os.listdir(LOCAL_ICON_DIR):
+        p = os.path.join(LOCAL_ICON_DIR, name)
+        if not os.path.isfile(p):
+            continue
+        st = os.stat(p)
+        count += 1
+        total += st.st_size
+        newest = max(newest, st.st_mtime)
+    return (count, total, round(newest, 3))
+
+
+def icons_zip_bytes():
+    """把本地 icon 目录打包成 zip（内容确定，时间戳固定，便于用哈希比较）。"""
+    key = _icons_fingerprint()
+    if _ZIP_CACHE['key'] == key and _ZIP_CACHE['bytes'] is not None:
+        return _ZIP_CACHE['bytes']
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name in sorted(os.listdir(LOCAL_ICON_DIR)) if os.path.isdir(LOCAL_ICON_DIR) else []:
+            p = os.path.join(LOCAL_ICON_DIR, name)
+            if not os.path.isfile(p):
+                continue
+            info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o600 << 16
+            with open(p, 'rb') as f:
+                z.writestr(info, f.read())
+    data = buf.getvalue()
+    _ZIP_CACHE['key'] = key
+    _ZIP_CACHE['bytes'] = data
+    return data
+
+
+def extract_icons_zip(data):
+    """解包图标 zip 到本地 icon 目录，返回写入的文件数。"""
+    os.makedirs(LOCAL_ICON_DIR, exist_ok=True)
+    written = 0
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for name in z.namelist():
+            if not name or name.endswith('/'):
+                continue
+            # 防目录穿越
+            base = os.path.basename(name)
+            if not base:
+                continue
+            with z.open(name) as src, open(os.path.join(LOCAL_ICON_DIR, base), 'wb') as dst:
+                dst.write(src.read())
+            written += 1
+    _ZIP_CACHE['key'] = None
+    return written
 
 DAV_NS = {'D': 'DAV:'}
+
+# 坚果云对频繁请求会返回 503 BlockedTemporarily（Too many requests），
+# 这些状态码需要退避重试，而不是直接失败。
+TRANSIENT_STATUS = (429, 502, 503, 504)
+MAX_RETRY = 5
+# 连续请求之间的最小间隔（秒），避免触发限流（坚果云免费版对请求频率很敏感）
+MIN_REQUEST_INTERVAL = 0.5
 
 PROPFIND_BODY = (
     '<?xml version="1.0" encoding="utf-8"?>'
@@ -121,6 +192,29 @@ class WebDAVError(Exception):
         self.status = status
 
 
+class WebDAVRateLimit(WebDAVError):
+    """坚果云限流（BlockedTemporarily）。命中后进入冷却期，本轮不再重试。"""
+
+
+# 命中限流后的冷却时间（秒），期间所有请求直接拒绝，避免越试越黑
+BLOCK_COOLDOWN = 600
+_rate_state = {'blocked_until': 0.0, 'interval': MIN_REQUEST_INTERVAL}
+
+# 后台任务进度（供前端轮询）
+PROGRESS = {'running': False, 'total': 0, 'done': 0, 'uploaded': 0,
+            'failed': [], 'message': '', 'error': None}
+
+
+def _reset_progress():
+    PROGRESS.update({'running': False, 'total': 0, 'done': 0,
+                     'uploaded': 0, 'failed': [], 'message': '', 'error': None})
+
+
+def rate_limit_remaining():
+    """冷却期内返回剩余秒数，否则 0。"""
+    return max(0, int(_rate_state['blocked_until'] - time.time()))
+
+
 class WebDAVClient:
     def __init__(self, email, password, timeout=30):
         self.email = email
@@ -128,6 +222,7 @@ class WebDAVClient:
         self.timeout = timeout
         token = base64.b64encode(f'{email}:{password}'.encode()).decode()
         self.auth = 'Basic ' + token
+        self._last_request_at = 0.0
 
     def _url(self, rel_path, as_dir=False):
         rel_path = rel_path.strip('/')
@@ -138,26 +233,66 @@ class WebDAVClient:
         # 否则坚果云会把文件当作集合资源，返回 403 OperationNotAllowed
         return url + '/' if as_dir else url
 
+    def _throttle(self):
+        """控制最小请求间隔，避免批量上传触发限流。"""
+        remain = rate_limit_remaining()
+        if remain:
+            raise WebDAVRateLimit(
+                f'坚果云限流冷却中，请约 {max(1, remain // 60)} 分钟后再试', 503)
+        gap = time.time() - self._last_request_at
+        interval = _rate_state['interval']
+        if gap < interval:
+            time.sleep(interval - gap)
+        self._last_request_at = time.time()
+
     def _request(self, rel_path, method='GET', data=None, extra_headers=None,
                  as_dir=False):
-        req = urllib.request.Request(self._url(rel_path, as_dir), data=data, method=method)
-        req.add_header('Authorization', self.auth)
-        if extra_headers:
-            for k, v in extra_headers.items():
-                req.add_header(k, v)
-        try:
-            return urllib.request.urlopen(req, timeout=self.timeout)
-        except urllib.error.HTTPError as e:
-            # 404 等情况把响应体读出便于上层判断
+        """发起请求；对限流/临时故障自动退避重试。"""
+        attempt = 0
+        while True:
+            self._throttle()
+            req = urllib.request.Request(self._url(rel_path, as_dir), data=data, method=method)
+            req.add_header('Authorization', self.auth)
+            if extra_headers:
+                for k, v in extra_headers.items():
+                    req.add_header(k, v)
             try:
-                body = e.read().decode('utf-8', 'ignore')
-            except Exception:
-                body = ''
-            err = WebDAVError(f'HTTP {e.code}: {e.reason} {body[:200]}', e.code)
-            err.body = body
-            raise err
-        except urllib.error.URLError as e:
-            raise WebDAVError(f'网络错误: {e.reason}')
+                return urllib.request.urlopen(req, timeout=self.timeout)
+            except urllib.error.HTTPError as e:
+                try:
+                    body = e.read().decode('utf-8', 'ignore')
+                except Exception:
+                    body = ''
+                # 坚果云明确限流：不要再顶着重试，直接进入冷却期
+                if 'BlockedTemporarily' in body or 'Too many requests' in body or e.code == 429:
+                    _rate_state['blocked_until'] = time.time() + BLOCK_COOLDOWN
+                    # 之后放慢节奏，逐步恢复
+                    _rate_state['interval'] = min(_rate_state['interval'] * 2, 1.5)
+                    err = WebDAVRateLimit(
+                        f'坚果云限流（{e.code}），已暂停 {BLOCK_COOLDOWN // 60} 分钟后再试', e.code)
+                    err.body = body
+                    raise err
+                if e.code in TRANSIENT_STATUS and attempt < MAX_RETRY:
+                    # 优先遵循服务端 Retry-After，否则指数退避 + 随机抖动
+                    delay = 0.0
+                    try:
+                        delay = float(e.headers.get('Retry-After') or 0)
+                    except Exception:
+                        delay = 0.0
+                    if not delay:
+                        delay = min(2 ** attempt + random.uniform(0, 0.5), 20)
+                    time.sleep(delay)
+                    attempt += 1
+                    continue
+                err = WebDAVError(f'HTTP {e.code}: {e.reason} {body[:200]}', e.code)
+                err.body = body
+                raise err
+            except urllib.error.URLError as e:
+                if attempt < MAX_RETRY:
+                    time.sleep(min(2 ** attempt + random.uniform(0, 0.5), 20))
+                    attempt += 1
+                    continue
+                raise WebDAVError(f'网络错误: {e.reason}')
 
     # ---- 基础操作 ----
 
@@ -219,6 +354,11 @@ class WebDAVClient:
             is_dir = response.find('.//D:resourcetype/D:collection', DAV_NS) is not None
             etag = response.findtext('.//D:getetag', namespaces=DAV_NS)
             lastmod = response.findtext('.//D:getlastmodified', namespaces=DAV_NS)
+            size_raw = response.findtext('.//D:getcontentlength', namespaces=DAV_NS)
+            try:
+                size = int(size_raw) if size_raw is not None else None
+            except (TypeError, ValueError):
+                size = None
             if is_dir:
                 dirs.append(name)
             else:
@@ -227,6 +367,7 @@ class WebDAVClient:
                     'rel': (rel_path + '/' + name).strip('/'),
                     'etag': (etag or '').strip('"'),
                     'lastmodified': lastmod or '',
+                    'size': size,
                 })
         return dirs, files
 
@@ -256,12 +397,19 @@ class WebDAVClient:
         return resp.read()
 
     def head_etag(self, rel_path):
-        """HEAD 请求，只返回 ETag（不下载文件体，几乎无流量）。
+        """HEAD 请求，返回版本标识（优先 ETag，其次 Last-Modified），几乎无流量。
+        坚果云 HEAD 不返回 ETag，所以用 Last-Modified 兜底。
         文件不存在返回 None。"""
         try:
             resp = self._request(rel_path, method='HEAD')
             resp.read()
-            return resp.headers.get('ETag') or ''
+            etag = resp.headers.get('ETag')
+            if etag:
+                return etag.strip('"')
+            last_mod = resp.headers.get('Last-Modified')
+            if last_mod:
+                return 'LM:' + last_mod.strip()
+            return ''
         except WebDAVError as e:
             if e.status == 404:
                 return None
@@ -314,6 +462,17 @@ def backup_local(tag='backup'):
             p = os.path.join(LOCAL_ICON_DIR, name)
             if os.path.isfile(p):
                 shutil.copy2(p, os.path.join(dest, 'icon', name))
+    return dest
+
+
+def _backup_tree(subdir, tag='backup'):
+    """把 static/api/<subdir> 打包成 backups/<tag>_<时间戳>.zip（单文件，省空间）。"""
+    if subdir != 'icon':
+        return ''
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    dest = os.path.join(BACKUP_DIR, f'{tag}_{_now_str()}.zip')
+    with open(dest, 'wb') as f:
+        f.write(icons_zip_bytes())
     return dest
 
 
@@ -379,7 +538,7 @@ def make_plan(resolutions=None, mode='sync'):
     links_cache = load_state().get('links', {})
     remote_etag = client.head_etag(_remote_rel('links.json')) if remote_exists else None
     links_unchanged = (
-        remote_exists and remote_etag is not None and
+        remote_exists and bool(remote_etag) and
         links_cache.get('local') == local_links_hash and
         links_cache.get('remote') == remote_etag
     )
@@ -469,50 +628,63 @@ def make_plan(resolutions=None, mode='sync'):
         # 双方各自新增、互不冲突 → 写本地并上传合并结果
         links_action = 'merge'
 
-    # ---------- 图标：只看最终引用到的文件，逐文件增量比对 ----------
-    state = load_state().get('files', {})
-    remote_files = {}
-    if remote_exists:
-        for info in client.list_files_recursive(REMOTE_DIR):
-            rel = info['rel'][len(REMOTE_DIR):].lstrip('/')
-            remote_files[rel] = info
+    # ---------- 图标：整体打成一个 zip，一次 PUT 传完 ----------
+    # 云端 icon/ 目录里逐个文件 PUT 会产生几百次请求，坚果云必然限流。
+    # 这里改成：本地先打包 icons.zip，只上传这一个文件；下载也只需一次 GET。
+    bundle_state = load_state().get('bundle', {})
+    local_zip = icons_zip_bytes()
+    local_zip_hash = hashlib.sha256(local_zip).hexdigest()
+    remote_zip_etag = client.head_etag(_remote_rel(REMOTE_BUNDLE)) if remote_exists else None
+    remote_has_zip = bool(remote_zip_etag)
 
-    icon_actions = []
-    for rel in sorted(_referenced_icon_rels(final_entries)):
-        l_path = _local_path('icon/' + rel)
-        l_hash = _sha256_of_file(l_path) if os.path.exists(l_path) else None
-        r_info = remote_files.get('icon/' + rel)
-        base = state.get('icon/' + rel, {})
+    l_changed = (not bundle_state.get('local')) or bundle_state['local'] != local_zip_hash
+    r_changed = remote_has_zip and (
+        (not bundle_state.get('remote')) or bundle_state['remote'] != remote_zip_etag)
 
-        if l_hash and r_info:
-            l_changed = (not base.get('local')) or l_hash != base.get('local')
-            r_changed = (not base.get('remote')) or r_info['etag'] != base.get('remote')
-            if not base and (l_changed or r_changed):
-                # 无基线时直接下载内容比对，相同则跳过并在执行时建立基线
-                if hashlib.sha256(client.download_bytes(r_info['rel'])).hexdigest() == l_hash:
-                    continue
-                l_changed = r_changed = True
-            if not l_changed and not r_changed:
-                continue
-            action = 'upload' if l_changed and not r_changed else \
-                     'download' if r_changed and not l_changed else 'conflict'
-        elif l_hash:
-            action = 'upload'
-        else:
-            action = 'download' if r_info else 'none'
+    bundle_action = 'none'
+    if mode == 'upload':
+        # 本地为准：只要任一端与基线不同，就用本地这份覆盖云端
+        if not remote_has_zip or l_changed or r_changed:
+            bundle_action = 'upload'
+    elif mode == 'download':
+        if remote_has_zip and (l_changed or r_changed):
+            bundle_action = 'download'
+    else:  # sync
+        if not remote_has_zip:
+            bundle_action = 'upload' if local_zip else 'none'
+        elif l_changed and r_changed:
+            bundle_action = 'conflict'
+        elif l_changed:
+            bundle_action = 'upload'
+        elif r_changed:
+            bundle_action = 'download'
 
-        icon_actions.append({'path': 'icon/' + rel, 'action': action})
-        if action == 'conflict':
-            conflicts.append({
-                'key': 'icon/' + rel,
-                'kind': 'icon',
-                'label': '图标 icon/' + rel,
-            })
+    if bundle_action == 'conflict':
+        conflicts.append({
+            'key': 'icons.zip',
+            'kind': 'icons',
+            'label': f'图标包（本地 {len(os.listdir(LOCAL_ICON_DIR)) if os.path.isdir(LOCAL_ICON_DIR) else 0} 个）',
+        })
+
+    # 云端还没有图标包时的兜底：只补下本地缺失的图标（通常一个都不差）
+    missing_icons = []
+    if mode != 'upload' and not remote_has_zip and remote_exists:
+        icon_files = {}
+        for info in client.list_files_recursive(REMOTE_ICON_DIR):
+            rel = info['rel'][len(REMOTE_ICON_DIR):].lstrip('/')
+            icon_files[rel] = info
+        for rel in sorted(_referenced_icon_rels(final_entries)):
+            if not os.path.exists(_local_path('icon/' + rel)) and rel in icon_files:
+                missing_icons.append(rel)
 
     return {
         'links_action': links_action,
         'final_entries': final_entries,
-        'icon_actions': icon_actions,
+        'bundle_action': bundle_action,
+        'icons_zip': local_zip,
+        'icons_count': len(os.listdir(LOCAL_ICON_DIR)) if os.path.isdir(LOCAL_ICON_DIR) else 0,
+        'missing_icons': missing_icons,
+        'icon_actions': [],
         'conflicts': conflicts,
         'remote_exists': remote_exists,
     }
@@ -521,22 +693,11 @@ def make_plan(resolutions=None, mode='sync'):
 # ---------------------------------------------------------------- 执行操作
 
 def _rebuild_state(client):
-    """同步完成后，用实际本地哈希 + 云端最新 ETag 重建基线。"""
-    state_files = {}
-    remote = {}
-    if client.exists(REMOTE_DIR):
-        for info in client.list_files_recursive(REMOTE_DIR):
-            rel = info['rel'][len(REMOTE_DIR):].lstrip('/')
-            remote[rel] = info['etag']
-    for rel in list_local_files():
-        state_files[rel] = {
-            'local': _sha256_of_file(_local_path(rel)),
-            'remote': remote.get(rel, ''),
-        }
-    # 记录当前 links.json 的 id 集合 + 本地哈希/云端ETag，用于下次同步
+    """同步完成后重建基线：图标包哈希/ETag、links.json 的 id 集合与哈希/ETag。"""
     local_links_path = os.path.join(LOCAL_API_DIR, 'links.json')
     links_ids = []
     links_cache = {}
+    bundle_cache = {}
     if os.path.exists(local_links_path):
         with open(local_links_path, 'rb') as f:
             raw = f.read()
@@ -545,7 +706,17 @@ def _rebuild_state(client):
             'remote': client.head_etag(_remote_rel('links.json')) or '',
         }
         links_ids = [str(e.get('id')) for e in json.loads(raw.decode('utf-8'))]
-    save_state({'files': state_files, 'links_ids': links_ids, 'links': links_cache})
+
+    try:
+        bundle_cache = {
+            'local': hashlib.sha256(icons_zip_bytes()).hexdigest(),
+            'remote': client.head_etag(_remote_rel(REMOTE_BUNDLE)) or '',
+        }
+    except Exception:
+        bundle_cache = {}
+
+    save_state({'files': {}, 'links_ids': links_ids, 'links': links_cache,
+                'bundle': bundle_cache})
 
 
 def _execute_plan(plan, resolutions, mode):
@@ -557,7 +728,7 @@ def _execute_plan(plan, resolutions, mode):
       'download' 云端优先：冲突一律使用云端，且不执行任何上传
     """
     resolutions = resolutions or {}
-    done = {'uploaded': [], 'downloaded': [], 'backups': []}
+    done = {'uploaded': [], 'downloaded': [], 'backups': [], 'failed': []}
 
     client = _get_client()
     client.ensure_dir(REMOTE_DIR)
@@ -587,44 +758,68 @@ def _execute_plan(plan, resolutions, mode):
             f.write(remote_bytes)
         done['downloaded'].append('links.json')
 
-    # ---------- 图标 ----------
-    for act in plan['icon_actions']:
-        rel, action = act['path'], act['action']
-        local_path = _local_path(rel)
-        remote_rel = _remote_rel(rel)
+    # ---------- 图标（整包一次传/一次拉） ----------
+    bundle_action = plan.get('bundle_action', 'none')
+    if bundle_action == 'conflict' and mode == 'sync':
+        bundle_action = 'upload' if resolutions.get('icons.zip') == 'local' else 'download'
 
-        if action == 'upload' or (action == 'conflict' and mode == 'upload'):
-            if mode != 'download':
-                client.upload_file(local_path, remote_rel)
-                done['uploaded'].append(rel)
+    PROGRESS.update({'running': True, 'total': 1 if bundle_action in ('upload', 'download') else 0,
+                     'done': 0, 'message': '正在处理图标包…'})
+    rate_limited = None
 
-        elif action == 'download' or (action == 'conflict' and mode == 'download'):
-            if mode != 'upload':
-                # 覆盖前备份本地
-                if os.path.exists(local_path):
-                    with open(local_path, 'rb') as f:
-                        done['backups'].append(
-                            _backup_file(rel, f.read(), '本地版本备份'))
-                client.download_file(remote_rel, local_path)
-                done['downloaded'].append(rel)
+    if bundle_action == 'upload' and mode != 'download':
+        try:
+            PROGRESS['message'] = f"正在上传图标包（{plan.get('icons_count', 0)} 个图标）…"
+            client.upload_bytes(_remote_rel(REMOTE_BUNDLE), plan['icons_zip'])
+            done['uploaded'].append(f"icons.zip({plan.get('icons_count', 0)} 个图标)")
+            PROGRESS['done'] = 1
+        except WebDAVRateLimit as e:
+            rate_limited = e
+            PROGRESS['message'] = str(e)
+        except WebDAVError as e:
+            done['failed'].append({'path': REMOTE_BUNDLE, 'error': str(e)})
 
-        elif action == 'conflict' and mode == 'sync':
-            choice = resolutions.get(rel)
-            if choice == 'local':
-                remote_bytes = client.download_bytes(remote_rel)
-                done['backups'].append(_backup_file(rel, remote_bytes, '云端版本备份'))
-                client.upload_file(local_path, remote_rel)
-                done['uploaded'].append(rel)
-            else:
-                if os.path.exists(local_path):
-                    with open(local_path, 'rb') as f:
-                        done['backups'].append(
-                            _backup_file(rel, f.read(), '本地版本备份'))
-                client.download_file(remote_rel, local_path)
-                done['downloaded'].append(rel)
+    elif bundle_action == 'download' and mode != 'upload':
+        try:
+            PROGRESS['message'] = '正在下载图标包…'
+            bundle = client.download_bytes(_remote_rel(REMOTE_BUNDLE))
+            # 覆盖本地图标目录前先整目录备份
+            done['backups'].append(_backup_tree('icon', '图标目录备份'))
+            count = extract_icons_zip(bundle)
+            done['downloaded'].append(f'icons.zip({count} 个图标)')
+            PROGRESS['done'] = 1
+        except WebDAVRateLimit as e:
+            rate_limited = e
+            PROGRESS['message'] = str(e)
+        except WebDAVError as e:
+            done['failed'].append({'path': REMOTE_BUNDLE, 'error': str(e)})
+
+    # 云端还没有图标包时，补下本地缺失的少量图标
+    for rel in plan.get('missing_icons', []):
+        if rate_limited:
+            break
+        try:
+            client.download_file(_remote_rel('icon/' + rel), _local_path('icon/' + rel))
+            done['downloaded'].append('icon/' + rel)
+        except WebDAVRateLimit as e:
+            rate_limited = e
+            PROGRESS['message'] = str(e)
+            break
+        except WebDAVError:
+            continue
+
+    if rate_limited:
+        done['rate_limited'] = str(rate_limited)
+        done['remaining'] = 0
+        PROGRESS['running'] = False
+        PROGRESS['message'] = str(rate_limited)
+        return done
 
     _rebuild_state(client)
     done['remote_exists'] = True
+    PROGRESS['running'] = False
+    PROGRESS['done'] = PROGRESS['total']
+    PROGRESS['message'] = '同步完成'
     return done
 
 
@@ -682,8 +877,9 @@ def status():
     remote_count = None
     cache = st.get('remote_count_cache', {})
     try:
-        if cfg.get('email') and cfg.get('password'):
-            client = WebDAVClient(cfg['email'], cfg['password'])
+        if cfg.get('email') and cfg.get('password') and not rate_limit_remaining():
+            # 状态查询要快：限流/网络异常时不拖住面板
+            client = WebDAVClient(cfg['email'], cfg['password'], timeout=8)
             etag = client.head_etag(_remote_rel('links.json'))
             if etag is None:
                 remote_count = 0
@@ -695,7 +891,9 @@ def status():
                 st['remote_count_cache'] = {'etag': etag, 'count': remote_count}
                 save_state(st)
     except Exception:
-        pass
+        # 失败时退回上次缓存的数量，避免面板一片空白
+        if 'count' in cache:
+            remote_count = cache['count']
 
     return {
         'logged_in': bool(cfg.get('email')),
@@ -704,4 +902,5 @@ def status():
         'last_sync': st.get('last_sync', ''),
         'local_count': local_count,
         'remote_count': remote_count,
+        'rate_limit_wait': rate_limit_remaining(),
     }

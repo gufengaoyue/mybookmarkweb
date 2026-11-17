@@ -2,8 +2,8 @@
 .timezone-box {
     position: fixed;
     top: 110px;
-    right: 10px;
-    width: 310px;
+    right: 12px;
+    width: 258px;
     background: var(--card-bg);
     border-radius: 12px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.1);
@@ -44,33 +44,59 @@
 }
 
 .timezone-content {
-    padding: 15px;
+    padding: 12px 15px 14px;
 }
 
+/* 每个地区：上行地区名，下行时间；地区之间留空 */
 .time-item {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 0 10px 0;
     margin-bottom: 10px;
+    border-bottom: 1px dashed #dceaf3;
     font-size: 12px;
 }
 
 .time-item:last-child {
+    padding-bottom: 0;
     margin-bottom: 0;
+    border-bottom: none;
+}
+
+.time-region {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.time-item.highlight {
+    background: rgba(255, 0, 0, 0.04);
+    border-radius: 6px;
+    padding: 6px 8px;
+    border-bottom-color: rgba(255, 0, 0, 0.15);
 }
 
 .time-label {
     color: #666;
     font-weight: 500;
-    /* text-align: right; */
-    /* 设置宽度 */
-    width: 60px;
+    white-space: nowrap;
+}
+
+.time-label.red {
+    color: #f00;
 }
 
 .time-value {
     color: #333;
     font-weight: bold;
-    text-align:left;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2px;
+}
+
+.time-value.red {
+    color: #f00;
 }
 
 /* 响应式设计 */

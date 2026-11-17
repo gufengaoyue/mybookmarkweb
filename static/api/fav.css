@@ -95,6 +95,89 @@
 
 }
 
+/* 表单内的小按钮（选网页 / 获取图标） */
+.mini-btn {
+  padding: 4px 10px;
+  margin-left: 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: #eaf2ff;
+  color: #2d6ae2;
+  border: 1px solid #cfe0ff;
+  cursor: pointer;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.mini-btn:hover {
+  background: #2d6ae2;
+  color: #fff;
+  border-color: #2d6ae2;
+}
+
+.mini-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 已打开网页选择列表 */
+.tab-picker {
+  margin: 4px 10px 10px;
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid #e2ecfb;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.tab-picker-tip {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #8b9ab4;
+}
+
+.tab-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid #eff4fc;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tab-item:last-child { border-bottom: none; }
+
+.tab-item:hover { background: #eef5ff; }
+
+.tab-item.loading { background: #fff7e6; cursor: progress; }
+
+.tab-item-title {
+  font-size: 13px;
+  color: #22324d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-item-url {
+  font-size: 11px;
+  color: #8494ad;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 图标预览缩略图 */
+.icon-preview {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  margin-left: 8px;
+  vertical-align: middle;
+  border: 1px solid #e2ecfb;
+  border-radius: 5px;
+  background: #fff;
+}
+
 @media (max-width: 600px) {
   .modal-content {
     width: 90%;

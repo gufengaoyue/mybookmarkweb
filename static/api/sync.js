@@ -197,6 +197,7 @@
   }
   .jgy-toast.success { background: linear-gradient(135deg,#10b981,#059669) }
   .jgy-toast.error   { background: linear-gradient(135deg,#f43f5e,#e11d48) }
+  .jgy-toast.warn    { background: linear-gradient(135deg,#f59e0b,#d97706) }
   .jgy-toast.info    { background: linear-gradient(135deg,#4f46e5,#2563eb) }
   `;
   const styleEl = document.createElement('style');
@@ -213,7 +214,7 @@
       wrap.className = 'jgy-toast-wrap';
       document.body.appendChild(wrap);
     }
-    const icons = { success: '✅', error: '⛔', info: 'ℹ️' };
+    const icons = { success: '✅', error: '⛔', warn: '⚠️', info: 'ℹ️' };
     const el = document.createElement('div');
     el.className = 'jgy-toast ' + type;
     el.innerHTML = `<span>${icons[type] || 'ℹ️'}</span><span></span>`;
@@ -285,14 +286,18 @@
 
           <!-- 未登录 -->
           <div id="jgyLoginView">
+            <form autocomplete="off" onsubmit="return false;">
             <div class="jgy-field">
               <span class="ico">✉️</span>
-              <input class="jgy-input" id="jgyEmail" type="text" placeholder="坚果云登录邮箱" autocomplete="off">
+              <input class="jgy-input" id="jgyEmail" type="text" name="jgy-account"
+                     placeholder="坚果云登录邮箱" autocomplete="off" spellcheck="false">
             </div>
             <div class="jgy-field">
               <span class="ico">🔑</span>
-              <input class="jgy-input" id="jgyPassword" type="password" placeholder="WebDAV 应用密码（非登录密码）">
+              <input class="jgy-input" id="jgyPassword" type="password" name="jgy-appsecret"
+                     placeholder="WebDAV 应用密码（非登录密码）" autocomplete="new-password">
             </div>
+            </form>
             <div class="jgy-hint">
               获取应用密码：登录
               <a href="https://www.jianguoyun.com/d/home#/security" target="_blank">坚果云网页端</a>
@@ -532,20 +537,62 @@
     // 同步
     document.getElementById('jgyBtnSync').onclick = doSync;
 
-    // 强制上传
+    // 强制上传（后台执行 + 轮询进度，图标多时要跑几分钟）
     document.getElementById('jgyBtnUpload').onclick = async () => {
       setBusy(true);
       log('开始上传（仅增量）...');
       try {
-        const data = await post('/upload', {});
-        const r = data.result || {};
-        (r.uploaded || []).forEach(p => log('已上传：' + p, 'OK'));
-        log(`上传完成，共 ${(r.uploaded || []).length} 个文件。`, 'OK');
-        toast('上传完成', 'success');
+        const started = await post('/upload', { background: true });
+        if (started && started.started === false && started.error) throw new Error(started.error);
+
+        let lastMsg = '';
+        const t0 = Date.now();
+        while (true) {
+          await new Promise(r => setTimeout(r, 1000));
+          let prog;
+          try {
+            const resp = await fetch(SYNC_API + '/progress');
+            prog = await resp.json();
+          } catch (e) {
+            continue;
+          }
+          if (prog.message && prog.message !== lastMsg) {
+            lastMsg = prog.message;
+            log(prog.message, 'INFO');
+          }
+          if (!prog.running) break;
+          if (Date.now() - t0 > 15 * 60 * 1000) break;
+        }
+
+        const resp2 = await fetch(SYNC_API + '/progress');
+        const p = await resp2.json();
+        const r = p.result || {};
+        const failed = (r.failed || []);
+        failed.forEach(f => log('上传失败：' + f.path + '（' + f.error + '）', 'ERR'));
+
+        if (p.error) {
+          log('上传失败：' + p.error, 'ERR');
+          toast(p.error, 'error');
+          if (p.wait_seconds) {
+            log(`坚果云正在限流，约 ${Math.max(1, Math.round(p.wait_seconds / 60))} 分钟后可再次点击上传。`, 'WARN');
+          }
+        } else if (r.rate_limited) {
+          log(`已上传 ${(r.uploaded || []).length} 个，因限流暂停。剩余 ${r.remaining || 0} 个待续传。`, 'WARN');
+          log('稍后再点一次「上传到云端」会自动续传，已传成功的不会重复上传。', 'WARN');
+          toast(`限流暂停：已传 ${(r.uploaded || []).length} 个，${r.remaining || 0} 个待续传`, 'warn');
+        } else {
+          log(`上传完成，共 ${(r.uploaded || []).length} 个文件。`, 'OK');
+          if (failed.length) {
+            log(`有 ${failed.length} 个文件未传成功，稍后再点一次上传会自动续传。`, 'WARN');
+            toast(`已传 ${(r.uploaded || []).length} 个，${failed.length} 个待续传`, 'warn');
+          } else {
+            toast('上传完成', 'success');
+          }
+        }
         refreshStatus();
       } catch (e) {
         log('上传失败：' + e.message, 'ERR');
-        toast('上传失败', 'error');
+        toast(e.message || '上传失败', 'error');
       }
       setBusy(false);
     };
