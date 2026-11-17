@@ -263,8 +263,11 @@ function renderTreeNode(node) {
       const hasChildren = Object.keys(child.children).length > 0;
       const open = expanded.has(child.path);
       const active = child.path === activeGroup ? ' active' : '';
+      // SVG 折角箭头：收起时朝右，展开时朝下，旋转有过渡
       const arrow = hasChildren
-        ? `<span class="tree-arrow${open ? ' open' : ''}"></span>`
+        ? `<span class="tree-arrow${open ? ' open' : ''}" title="${open ? '收起' : '展开'}">
+             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9l7 7 7-7"/></svg>
+           </span>`
         : '<span class="tree-arrow empty"></span>';
       const kids = (hasChildren && open)
         ? `<div class="group-children">${renderTreeNode(child)}</div>` : '';
@@ -282,13 +285,18 @@ function renderGroups() {
     el.onclick = () => setActiveGroup(el.dataset.path);
   });
   nav.querySelectorAll('.tree-arrow').forEach(el => {
+    if (el.classList.contains('empty')) return; // 无子分组：不需要箭头点击
     el.onclick = (e) => {
-      e.stopPropagation();
+      e.stopPropagation();   // 只折叠/展开，不切换当前分组
       const node = el.closest('.group-node');
       if (!node) return;
       const p = node.dataset.path;
-      if (expanded.has(p)) expanded.delete(p); else expanded.add(p);
-      renderGroups();
+      const nowOpen = !expanded.has(p);
+      if (nowOpen) expanded.add(p); else expanded.delete(p);
+      // 先让箭头转动，再重建子列表，视觉上更连贯
+      el.classList.toggle('open', nowOpen);
+      el.title = nowOpen ? '收起' : '展开';
+      setTimeout(renderGroups, 170);
     };
   });
   refreshGroupOptions();
