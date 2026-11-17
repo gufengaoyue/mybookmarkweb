@@ -322,6 +322,18 @@ button:hover {
     box-shadow: 0 2px 8px rgba(45, 106, 226, 0.25);
 }
 
+/* 卡片拖到分组上时的落点高亮 */
+.group-node.drop-target {
+    background: #e3f7ec;
+    border-left-color: #16a34a;
+    color: #0f7a43;
+    box-shadow: 0 0 0 1px #b7e6ca inset;
+}
+
+.group-node.drop-target .tree-arrow svg {
+    stroke: #16a34a;
+}
+
 .group-node.active .group-count {
     color: #dbe8ff;
 }

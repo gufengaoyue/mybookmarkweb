@@ -7,6 +7,9 @@ let allData = [];
 let activeGroup = '首页';
 let filterText = '';
 let expanded = new Set();
+// 拖拽状态：卡片拖到左侧分组上 = 改所属分组
+let draggingCardId = null;
+let groupDropDone = false;
 
 // ---------- 图标自动探测 ----------
 function updateIconPreview() {
@@ -176,7 +179,6 @@ async function loadData() {
       ensureExpanded(activeGroup);
       renderGroups();
       renderCards();
-      initDragAndDrop(); // 初始化拖拽
       clearAutofill();
     } catch (error) {
       console.error('加载失败:', error);
@@ -283,6 +285,24 @@ function renderGroups() {
   nav.innerHTML = renderTreeNode(buildGroupTree());
   nav.querySelectorAll('.group-node').forEach(el => {
     el.onclick = () => setActiveGroup(el.dataset.path);
+
+    // 把卡片拖到分组上 → 改变所属分组
+    el.addEventListener('dragover', e => {
+      if (!draggingCardId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      el.classList.add('drop-target');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+    el.addEventListener('drop', async e => {
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.remove('drop-target');
+      const id = draggingCardId || e.dataTransfer.getData('text/plain');
+      const target = el.dataset.path;
+      if (!id || !target) return;
+      await moveCardToGroup(id, target);
+    });
   });
   nav.querySelectorAll('.tree-arrow').forEach(el => {
     if (el.classList.contains('empty')) return; // 无子分组：不需要箭头点击
@@ -300,6 +320,30 @@ function renderGroups() {
     };
   });
   refreshGroupOptions();
+}
+
+// 拖拽卡片到左侧分组：把这条书签改到目标分组
+async function moveCardToGroup(cardId, targetGroup) {
+  const item = allData.find(x => String(x.id) === String(cardId));
+  if (!item) return;
+  const from = normalizeGroup(item.group);
+  const to = normalizeGroup(targetGroup);
+  if (from === to) { groupDropDone = false; return; }
+
+  groupDropDone = true;   // 告诉 dragend 不要再保存顺序
+  try {
+    const r = await fetch(server + '/' + cardId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...item, group: to })
+    });
+    if (!r.ok) throw new Error('移动失败');
+    tip(`「${item.name}」已移到「${to}」`, 'success');
+    await loadData();
+  } catch (err) {
+    groupDropDone = false;
+    tip('移动分组失败，请重试', 'error');
+  }
 }
 
 function setActiveGroup(name) {
@@ -361,6 +405,7 @@ function renderCards() {
                 </div>
        </div>`;
     }).join('');
+    initDragAndDrop();   // 每次重新渲染卡片都重新绑定拖拽（否则切分组/搜索后拖拽失效）
 }
 
 function initDragAndDrop() {
@@ -373,21 +418,29 @@ function initDragAndDrop() {
     // 拖拽开始
     card.addEventListener('dragstart', e => {
       draggedCard = card;
+      draggingCardId = card.dataset.id;
+      groupDropDone = false;
       originalIndex = Array.from(card.parentNode.children).indexOf(card);
       card.classList.add('dragging');
       e.dataTransfer.setData('text/plain', card.dataset.id);
+      e.dataTransfer.effectAllowed = 'move';
     });
 
     // 拖拽结束
     card.addEventListener('dragend', () => {
       card.classList.remove('dragging');
-      saveNewOrder();
+      const dropped = groupDropDone;
+      draggingCardId = null;
+      groupDropDone = false;
+      // 拖到分组上已经改成“换分组”了，就不要再重排顺序
+      if (!dropped) saveNewOrder();
     });
 
     // 拖拽经过
     card.addEventListener('dragover', e => {
       e.preventDefault();
       if (draggedCard === card) return;
+      if (filterText) return;   // 搜索状态下不重排，避免顺序错乱
 
       const rect = card.getBoundingClientRect();
       const midX = rect.left + rect.width / 2;
@@ -407,23 +460,31 @@ function initDragAndDrop() {
     });
   });
 
-  // 保存新顺序到服务器
+  // 保存新顺序到服务器（只重排，服务端不会再删掉没传到的条目）
   async function saveNewOrder() {
-    const cardIds = Array.from(document.querySelectorAll('.card'))
-                      .map(card => card.dataset.id);
+    if (filterText) return;   // 搜索结果是跨分组的混合列表，重排没有意义
+    // 把当前分组卡片的新顺序填回它们在总列表里各自的位置，其余条目保持原样
+    const visibleIds = Array.from(document.querySelectorAll('.card')).map(c => c.dataset.id);
+    let k = 0;
+    const fullIds = allData.map(item => {
+      if (normalizeGroup(item.group) === activeGroup) {
+        return visibleIds[k++] || String(item.id);
+      }
+      return String(item.id);
+    });
 
     try {
       const response = await fetch(server + '/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nod: cardIds })
+        body: JSON.stringify({ nod: fullIds })
       });
 
       if (!response.ok) throw new Error('保存失败');
       loadData(); // 刷新数据确保一致性
     } catch (error) {
       console.error('保存顺序失败:', error);
-      alert('顺序保存失败，请重试');
+      tip('顺序保存失败，请重试', 'error');
     }
   }
 }

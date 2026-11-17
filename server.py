@@ -413,19 +413,34 @@ def _run_tabs_script(args):
 
 @app.route('/api/links/order', methods=['POST'])
 def update_order():
+    """调整顺序。只做重排，绝不删除条目：
+    传来的 id 按给定顺序排前面，没传到的条目按原顺序接在后面。"""
     try:
-        new_order = request.json.get('nod', [])
+        body = request.json or {}
+        new_order = body.get('nod') or []
+        if not isinstance(new_order, list) or not new_order:
+            # 空列表直接返回当前数据，避免把 links.json 清空
+            return jsonify(load_data())
+
         data = load_data()
+        by_id = {str(x.get('id')): x for x in data}
+        wanted = [str(i) for i in new_order if str(i) in by_id]
 
-        # 重新排序数据
-        ordered_data = []
-        for item_id in new_order:
-            item = next((x for x in data if str(x['id']) == str(item_id)), None)
-            if item:
-                ordered_data.append(item)
+        # 把这些 id 按新顺序填回它们原本占用的位置，其余条目位置不动。
+        # 这样即使前端只传了当前分组的卡片，也不会影响其它分组、更不会丢数据。
+        slots = [i for i, x in enumerate(data) if str(x.get('id')) in set(wanted)]
+        slots = slots[:len(wanted)]
+        rebuilt = [None] * len(data)
+        for slot, key in zip(slots, wanted):
+            rebuilt[slot] = by_id[key]
+        rest = iter([x for x in data if str(x.get('id')) not in set(wanted)])
+        for i in range(len(rebuilt)):
+            if rebuilt[i] is None:
+                rebuilt[i] = next(rest, None)
+        ordered = [x for x in rebuilt if x is not None]
 
-        save_data(ordered_data)
-        return jsonify(ordered_data)
+        save_data(ordered)
+        return jsonify(ordered)
     except Exception as e:
         return jsonify({'error': '顺序更新失败'}), 500
 
