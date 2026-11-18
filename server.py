@@ -5,6 +5,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
 import os
+import re
+import unicodedata
 from urllib.parse import urlparse, urljoin
 
 
@@ -68,9 +70,39 @@ def _backup_data_file(max_keep=20):
         return None
 
 
+# 从飞书/微信等处复制标题时会带上一串看不见的格式字符（Unicode Cf 类：U+202C、U+200B、U+2060、U+FEFF…），
+# 这些字符宽度为 0，会让前端的“截断 20 字”变成空白，看起来像没有名称。
+_INVISIBLE_RE = re.compile('[\u00ad\u115f\u1160\u3164\uffa0]')
+
+
+def clean_text(value):
+    """去掉不可见格式字符（Cf 类 + 特殊空白填充符），折叠多余空白，返回干净文本。"""
+    s = ''.join(ch for ch in str(value or '') if unicodedata.category(ch) != 'Cf')
+    s = _INVISIBLE_RE.sub('', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+def _name_fallback(item):
+    """名称被清空时用域名兜底，避免出现无名书签。"""
+    try:
+        host = urlparse(item.get('url') or '').netloc
+    except Exception:
+        host = ''
+    return host or '未命名书签'
+
+
 def save_data(data):
     """保存数据到JSON文件（UTF-8，保留中文）。
-    先写临时文件再原子替换，避免写一半留下坏文件；写之前自动备份。"""
+    先写临时文件再原子替换，避免写一半留下坏文件；写之前自动备份。
+    落盘前统一清洗名称/分组里的不可见字符。"""
+    for item in data or []:
+        if isinstance(item, dict):
+            if 'name' in item:
+                cleaned = clean_text(item.get('name'))
+                item['name'] = cleaned or _name_fallback(item)
+            if 'group' in item and isinstance(item.get('group'), str):
+                item['group'] = clean_text(item.get('group'))
     _backup_data_file()
     tmp = DATA_FILE + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
@@ -98,7 +130,7 @@ def save_groups(groups):
     """写分组注册表：去重去空，UTF-8，先写临时文件再替换"""
     seen, cleaned = set(), []
     for g in groups or []:
-        g = (g or '').strip().strip('/')
+        g = clean_text(g).strip('/')
         if not g or g in seen:
             continue
         seen.add(g)
@@ -362,6 +394,7 @@ def create_link():
             return jsonify({'error': '无效数据格式'}), 400
 
         new_item['id'] = new_item.get('id') or int(time.time() * 1000)
+        new_item['name'] = clean_text(new_item.get('name')) or _name_fallback(new_item)
         normalize_group(new_item)
         if new_item.get('icon') and (new_item.get('icon').startswith('http')
                                      or _is_local_path(new_item.get('icon'))):
@@ -387,6 +420,7 @@ def update_link(id):
             return jsonify({'error': '无效数据格式'}), 400
 
         new_item = request.json
+        new_item['name'] = clean_text(new_item.get('name')) or _name_fallback(new_item)
         normalize_group(new_item)
         if new_item.get('icon') and (new_item.get('icon').startswith('http')
                                      or _is_local_path(new_item.get('icon'))):

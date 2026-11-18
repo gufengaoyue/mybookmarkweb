@@ -580,6 +580,15 @@ function getVisibleItems() {
   });
 }
 
+// 从飞书/微信复制来的标题常带一串零宽格式字符（Cf 类），显示时先清掉，
+// 否则“截断 20 字”会全是不可见字符，看起来像没有名称。
+const INVISIBLE_RE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+
+function cleanName(s) {
+  const t = String(s == null ? '' : s).replace(INVISIBLE_RE, '').replace(/\s+/g, ' ').trim();
+  return t || '未命名书签';
+}
+
 // 搜索结果的日期列：id 是毫秒时间戳
 function formatAddedDate(id) {
   const n = Number(id);
@@ -633,7 +642,7 @@ function renderCards() {
         const group = normalizeGroup(item.group);
         const url = item.url || '';
         const shortUrl = url.replace(/^https?:\/\//i, '');
-        const name = item.name || '';
+        const name = cleanName(item.name);
         return `
         <div class="result-row" data-id="${item.id}">
           <span class="r-cell r-group" title="${escapeAttr(group)}">${escapeHtml(clipText(group, 16))}</span>
@@ -658,13 +667,14 @@ function renderCards() {
       const url = item.url || '';
       const shortUrl = url.replace(/^https?:\/\//i, '');
       const group = normalizeGroup(item.group);
+      const name = cleanName(item.name);
       return `
             <div class="card" data-id="${item.id}" draggable="true">
                 <a href="${url}" target="_blank" class="card-link"
-                   title="${escapeAttr(item.name + '\n' + url + '\n分组：' + group)}">
+                   title="${escapeAttr(name + '\n' + url + '\n分组：' + group)}">
                     <img src="${item.icon}" class="card-icon" onerror="this.style.display='none'" onload="this.style.display='block'">
                     <div class="card-content">
-                        <h3 class="card-title">${escapeHtml(item.name)}</h3>
+                        <h3 class="card-title">${escapeHtml(name)}</h3>
                         <div class="card-url">${escapeHtml(shortUrl)}</div>
                     </div>
                 </a>
