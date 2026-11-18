@@ -97,9 +97,7 @@ flask-cors>=4.0,<5.0
 python server.py
 ```
 
-浏览器打开 [http://127.0.0.1:3000/](http://127.0.0.1:3000/)。
-
-默认只监听本机回环地址 `127.0.0.1:3000`，**只有这台电脑能访问**，同一 WiFi / 局域网里的手机、同事电脑都连不上（见[安全提示](#安全提示)）。
+浏览器打开 [http://127.0.0.1:3000/](http://127.0.0.1:3000/)。默认监听 `0.0.0.0:3000`，局域网设备也能访问（见[安全提示](#安全提示)）。
 
 Windows 想无窗口常驻，可以：
 
@@ -288,9 +286,6 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 **端口被占用**
 `server.py` 末尾固定 `port = 3000`，改一行即可；前端 `func.js` 里的 `server` / `groupServer` 变量也指向 3000，需要一起改。
 
-**手机或另一台电脑打不开页面？**
-默认只监听 `127.0.0.1`，本来就只允许本机访问。确有需要时按[安全提示](#安全提示)里的 `WEB_API_HOST=0.0.0.0` 临时放开，同时留意同网段的任何人都能改你的书签。
-
 **图标不显示**
 `static/api/icon/` 被 `.gitignore` 忽略，从 GitHub 克隆下来图标是空的，需要通过云同步「下载到本地」或重新添加书签来补。
 
@@ -298,20 +293,7 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 
 ## 安全提示
 
-- 这是**单用户、无鉴权**的本地工具，默认**只监听本机回环地址 `127.0.0.1:3000`**：局域网里的其他设备（手机、同事电脑）无法访问，也读不到、改不了你的书签数据。
-- 确实需要手机/平板临时访问时，再显式放开：
-
-  ```powershell
-  # Windows PowerShell：仅当前这次启动生效，关掉窗口即恢复默认
-  $env:WEB_API_HOST = "0.0.0.0"; python server.py
-  ```
-
-  ```bash
-  # macOS / Linux
-  WEB_API_HOST=0.0.0.0 python server.py
-  ```
-
-  放开后同网段设备即可访问 `http://<本机IP>:3000/`，此时**任何人拿到这个地址都能增删你的书签**，用完请改回默认（或关闭程序）。**任何时候都不要把它直接暴露到公网**；如需外网访问，请套一层带认证的反向代理（Nginx Basic Auth / Tailscale 等）。
+- 这是**单用户、无鉴权**的本地工具，默认监听 `0.0.0.0`，同局域网的人可以直接访问和修改你的书签。**不要把它直接暴露到公网**；如需外网访问，请套一层带认证的反向代理（Nginx Basic Auth / Tailscale 等）。
 - `sync_config.json`（坚果云应用密码）、`.sync_state.json`、`backups/`、`links.json`、`groups.json`、`icon/` 全部在 `.gitignore` 中，**不要把它们提交到公开仓库**。
 - 上传/下载/覆盖都会改写数据，写盘前自动备份；重大操作前建议再点一次「本地备份」。
 
@@ -322,6 +304,7 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 - 仅面向个人使用，无多用户、无权限体系、无并发写入锁（同一时刻请在单一端编辑）。
 - 图标只保留域名维度的 favicon，不做多尺寸/深色模式适配。
 - `server.js` / `package.json` 是早期 Node 实验版本，未接入云同步，保留仅作参考。
+- 搜索引擎只做了百度 / Bing / 360 的快捷跳转，没有内嵌搜索聚合。
 
 ---
 
@@ -332,3 +315,9 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 1. 后端逻辑集中在 `server.py`（接口）与 `webdav_sync.py`（同步），前端在 `static/api/`；
 2. 数据文件与凭据不入库，请在本地验证；
 3. 涉及同步的改动请同时验证「上传 / 下载 / 覆盖」三种路径与限流保护。
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 gufengaoyue
