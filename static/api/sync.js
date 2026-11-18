@@ -398,6 +398,21 @@
                 <span><div class="t-name">本地备份</div><div class="t-desc">时间戳快照</div></span>
               </button>
             </div>
+
+            <!-- 全量覆盖：不做差异判断，手工改过图标也能强推上去 -->
+            <div class="jgy-grid">
+              <button class="jgy-tile b-over-up" id="jgyBtnOverwriteUp">
+                <span class="badge">⤴️</span>
+                <span><div class="t-name">覆盖云端</div><div class="t-desc">本地全量 → 云端</div></span>
+              </button>
+              <button class="jgy-tile b-over-down" id="jgyBtnOverwriteDown">
+                <span class="badge">⤵️</span>
+                <span><div class="t-name">覆盖本地</div><div class="t-desc">云端全量 → 本地</div></span>
+              </button>
+            </div>
+            <div class="jgy-hint" style="margin-top:-4px;margin-bottom:12px;">
+              这两项不做差异比较：书签、图标包、分组名单整体替换。手工替换过图标却不生效时，用「覆盖云端」。
+            </div>
             <div id="jgyConflictBox"></div>
             <div class="jgy-logout-row">
               <button class="jgy-btn danger" id="jgyBtnLogout">退出登录并清除凭据</button>
@@ -554,6 +569,86 @@
     setBusy(false);
   }
 
+  // ---------- 上传（full=true 全量覆盖云端，不做差异判断）
+  async function runUpload(full) {
+    setBusy(true);
+    log(full ? '开始全量覆盖云端（不做差异判断）...' : '开始上传（仅增量）...', full ? 'WARN' : 'INFO');
+    try {
+      const started = await post('/upload', { background: true, full: !!full });
+      if (started && started.started === false && started.error) throw new Error(started.error);
+
+      let lastMsg = '';
+      const t0 = Date.now();
+      while (true) {
+        await new Promise(r => setTimeout(r, 1000));
+        let prog;
+        try {
+          const resp = await fetch(SYNC_API + '/progress');
+          prog = await resp.json();
+        } catch (e) {
+          continue;
+        }
+        if (prog.message && prog.message !== lastMsg) {
+          lastMsg = prog.message;
+          log(prog.message, 'INFO');
+        }
+        if (!prog.running) break;
+        if (Date.now() - t0 > 15 * 60 * 1000) break;
+      }
+
+      const resp2 = await fetch(SYNC_API + '/progress');
+      const p = await resp2.json();
+      const r = p.result || {};
+      const failed = (r.failed || []);
+      failed.forEach(f => log('上传失败：' + f.path + '（' + f.error + '）', 'ERR'));
+
+      if (p.error) {
+        log('上传失败：' + p.error, 'ERR');
+        toast(p.error, 'error');
+        if (p.wait_seconds) {
+          log(`坚果云正在限流，约 ${Math.max(1, Math.round(p.wait_seconds / 60))} 分钟后可再次点击上传。`, 'WARN');
+        }
+      } else if (r.rate_limited) {
+        log(`已上传 ${(r.uploaded || []).length} 个，因限流暂停。剩余 ${r.remaining || 0} 个待续传。`, 'WARN');
+        log('稍后再点一次「上传到云端」会自动续传，已传成功的不会重复上传。', 'WARN');
+        toast(`限流暂停：已传 ${(r.uploaded || []).length} 个，${r.remaining || 0} 个待续传`, 'warn');
+      } else {
+        log(`${full ? '覆盖云端完成' : '上传完成'}，共 ${(r.uploaded || []).length} 个文件。`, 'OK');
+        if (failed.length) {
+          log(`有 ${failed.length} 个文件未传成功，稍后再点一次上传会自动续传。`, 'WARN');
+          toast(`已传 ${(r.uploaded || []).length} 个，${failed.length} 个待续传`, 'warn');
+        } else {
+          toast(full ? '覆盖云端完成' : '上传完成', 'success');
+        }
+      }
+      refreshStatus();
+    } catch (e) {
+      log('上传失败：' + e.message, 'ERR');
+      toast(e.message || '上传失败', 'error');
+    }
+    setBusy(false);
+  }
+
+  // ---------- 下载（full=true 全量覆盖本地）
+  async function runDownload(full) {
+    setBusy(true);
+    log(full ? '开始全量覆盖本地（不做差异判断）...' : '开始下载（仅增量）...', full ? 'WARN' : 'INFO');
+    try {
+      const data = await post('/download', { full: !!full });
+      const r = data.result || {};
+      (r.downloaded || []).forEach(p => log('已下载：' + p, 'OK'));
+      (r.backups || []).forEach(p => log('本地旧内容已备份：' + p, 'WARN'));
+      log(`${full ? '覆盖本地完成' : '下载完成'}，共 ${(r.downloaded || []).length} 个文件。`, 'OK');
+      toast(full ? '覆盖本地完成' : '下载完成', 'success');
+      if (typeof loadData === 'function') loadData();
+      refreshStatus();
+    } catch (e) {
+      log('下载失败：' + e.message, 'ERR');
+      toast('下载失败', 'error');
+    }
+    setBusy(false);
+  }
+
   // ---------- 事件绑定
   function bindPanelEvents() {
     const close = () => { panelOverlay.style.display = 'none'; };
@@ -609,90 +704,32 @@
     // 同步
     document.getElementById('jgyBtnSync').onclick = doSync;
 
-    // 强制上传（后台执行 + 轮询进度，图标多时要跑几分钟）
+    // 上传：增量 / 全量（覆盖云端）
     document.getElementById('jgyBtnUpload').onclick = async () => {
-      setBusy(true);
-      log('开始上传（仅增量）...');
-      try {
-        const started = await post('/upload', { background: true });
-        if (started && started.started === false && started.error) throw new Error(started.error);
-
-        let lastMsg = '';
-        const t0 = Date.now();
-        while (true) {
-          await new Promise(r => setTimeout(r, 1000));
-          let prog;
-          try {
-            const resp = await fetch(SYNC_API + '/progress');
-            prog = await resp.json();
-          } catch (e) {
-            continue;
-          }
-          if (prog.message && prog.message !== lastMsg) {
-            lastMsg = prog.message;
-            log(prog.message, 'INFO');
-          }
-          if (!prog.running) break;
-          if (Date.now() - t0 > 15 * 60 * 1000) break;
-        }
-
-        const resp2 = await fetch(SYNC_API + '/progress');
-        const p = await resp2.json();
-        const r = p.result || {};
-        const failed = (r.failed || []);
-        failed.forEach(f => log('上传失败：' + f.path + '（' + f.error + '）', 'ERR'));
-
-        if (p.error) {
-          log('上传失败：' + p.error, 'ERR');
-          toast(p.error, 'error');
-          if (p.wait_seconds) {
-            log(`坚果云正在限流，约 ${Math.max(1, Math.round(p.wait_seconds / 60))} 分钟后可再次点击上传。`, 'WARN');
-          }
-        } else if (r.rate_limited) {
-          log(`已上传 ${(r.uploaded || []).length} 个，因限流暂停。剩余 ${r.remaining || 0} 个待续传。`, 'WARN');
-          log('稍后再点一次「上传到云端」会自动续传，已传成功的不会重复上传。', 'WARN');
-          toast(`限流暂停：已传 ${(r.uploaded || []).length} 个，${r.remaining || 0} 个待续传`, 'warn');
-        } else {
-          log(`上传完成，共 ${(r.uploaded || []).length} 个文件。`, 'OK');
-          if (failed.length) {
-            log(`有 ${failed.length} 个文件未传成功，稍后再点一次上传会自动续传。`, 'WARN');
-            toast(`已传 ${(r.uploaded || []).length} 个，${failed.length} 个待续传`, 'warn');
-          } else {
-            toast('上传完成', 'success');
-          }
-        }
-        refreshStatus();
-      } catch (e) {
-        log('上传失败：' + e.message, 'ERR');
-        toast(e.message || '上传失败', 'error');
-      }
-      setBusy(false);
+      await runUpload(false);
     };
-
-    // 强制下载
-    document.getElementById('jgyBtnDownload').onclick = async () => {
+    document.getElementById('jgyBtnOverwriteUp').onclick = async () => {
       const ok = await confirmDialog({
-        title: '确认从云端下载覆盖本地？',
-        message: '云端 bookmark_api 中的 links.json 与图标将覆盖本地，覆盖前会自动完整备份本地内容。',
-        confirmText: '确认下载覆盖', type: 'warn'
+        title: '用本地数据覆盖云端？',
+        message: '不做差异比较：云端 links.json、图标包、分组名单会整份替换成本机当前内容。',
+        confirmText: '覆盖云端', type: 'danger'
       });
       if (!ok) return;
-      setBusy(true);
-      log('开始下载（仅增量）...');
-      try {
-        const data = await post('/download', {});
-        const r = data.result || {};
-        (r.downloaded || []).forEach(p => log('已下载：' + p, 'OK'));
-        (r.backups || []).forEach(p => log('本地旧内容已备份：' + p, 'WARN'));
-        log('下载完成，共 ' + (r.downloaded || []).length + ' 个文件。', 'OK');
-        toast('下载完成', 'success');
-        if (typeof loadData === 'function') loadData();
-        refreshStatus();
-      } catch (e) {
-        log('下载失败：' + e.message, 'ERR');
-        toast('下载失败', 'error');
-      }
-      setBusy(false);
+      await runUpload(true);
+    };
+
+    // 下载：增量 / 全量（覆盖本地）
+    document.getElementById('jgyBtnDownload').onclick = async () => {
+      await runDownload(false);
+    };
+    document.getElementById('jgyBtnOverwriteDown').onclick = async () => {
+      const ok = await confirmDialog({
+        title: '用云端数据覆盖本地？',
+        message: '不做差异比较：本地 links.json、图标、分组名单会整份替换成云端内容（覆盖前自动备份本地）。',
+        confirmText: '覆盖本地', type: 'danger'
+      });
+      if (!ok) return;
+      await runDownload(true);
     };
 
     // 本地备份

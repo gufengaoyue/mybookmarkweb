@@ -728,16 +728,17 @@ def sync_upload():
     if not body.get('background'):
         # 兼容直接调用的场景：同步执行
         try:
-            uploaded = webdav_sync.force_upload()
+            uploaded = webdav_sync.force_upload(full=bool(body.get('full')))
             return jsonify({'success': True, 'result': uploaded})
         except Exception as e:
             return _sync_error(e)
 
     webdav_sync._reset_progress()
+    full = bool(body.get('full'))
 
     def _worker():
         try:
-            webdav_sync.PROGRESS['result'] = webdav_sync.force_upload()
+            webdav_sync.PROGRESS['result'] = webdav_sync.force_upload(full=full)
         except Exception as e:
             webdav_sync.PROGRESS['error'] = str(e)
         finally:
@@ -759,7 +760,8 @@ def sync_progress():
 @app.route('/api/sync/download', methods=['POST'])
 def sync_download():
     try:
-        result = webdav_sync.force_download()
+        body = request.json or {}
+        result = webdav_sync.force_download(full=bool(body.get('full')))
         return jsonify({'success': True, 'result': result})
     except Exception as e:
         return _sync_error(e)

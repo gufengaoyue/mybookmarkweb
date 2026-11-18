@@ -46,20 +46,25 @@ _ZIP_CACHE = {'key': None, 'bytes': None}
 
 
 def _icons_fingerprint():
-    """图标目录的轻量指纹（文件数、总字节、最后修改时间），用于判断是否需要重打包。"""
+    """图标目录指纹：文件数 + 总字节 + 内容哈希。
+    早先用「文件数/总字节/mtime」判断，手工替换一个图标（尤其保留原时间戳、
+    大小又碰巧一致）时会被判成「没变化」，导致改过的图标传不上去。
+    改成按内容算哈希，任何一个字节变了都能被发现。"""
+    h = hashlib.sha256()
     count = total = 0
-    newest = 0.0
     if not os.path.isdir(LOCAL_ICON_DIR):
-        return (0, 0, 0.0)
-    for name in os.listdir(LOCAL_ICON_DIR):
+        return (0, 0, '')
+    for name in sorted(os.listdir(LOCAL_ICON_DIR)):
         p = os.path.join(LOCAL_ICON_DIR, name)
         if not os.path.isfile(p):
             continue
-        st = os.stat(p)
+        with open(p, 'rb') as f:
+            data = f.read()
+        h.update(name.encode('utf-8'))
+        h.update(data)
         count += 1
-        total += st.st_size
-        newest = max(newest, st.st_mtime)
-    return (count, total, round(newest, 3))
+        total += len(data)
+    return (count, total, h.hexdigest())
 
 
 def icons_zip_bytes():
@@ -551,13 +556,14 @@ def _referenced_icon_rels(entries):
     return rels
 
 
-def make_plan(resolutions=None, mode='sync'):
+def make_plan(resolutions=None, mode='sync', force=False):
     """
     生成同步计划（条目级合并 + 图标增量）。
     mode:
       'sync'    双向合并 + 删除传播
       'upload'  本地为准：final = 本地条目（本地删了就推到云端）
       'download' 云端为准：final = 云端条目（本地删了就从云端恢复）
+    force=True 时忽略差异判断，整份覆盖（用于「覆盖云端 / 覆盖本地」）。
     """
     resolutions = resolutions or {}
     client = _get_client()
@@ -747,6 +753,19 @@ def make_plan(resolutions=None, mode='sync'):
             'kind': 'icons',
             'label': f'图标包（本地 {len(os.listdir(LOCAL_ICON_DIR)) if os.path.isdir(LOCAL_ICON_DIR) else 0} 个）',
         })
+
+    # 全量覆盖：不做差异判断，直接整份推上去 / 拉下来
+    if force:
+        if mode == 'upload':
+            links_action = 'upload'
+            groups_action = 'upload'
+            bundle_action = 'upload'
+        elif mode == 'download':
+            if remote_exists:
+                links_action = 'download'
+            groups_action = 'download' if remote_has_groups else 'none'
+            bundle_action = 'download' if remote_has_zip else 'none'
+        conflicts = []
 
     # 云端还没有图标包时的兜底：只补下本地缺失的图标（通常一个都不差）
     missing_icons = []
@@ -943,15 +962,17 @@ def _execute_plan(plan, resolutions, mode):
     return done
 
 
-def force_upload():
-    """本地为准：把本地内容（含本地删除）推到云端，只传有变化的部分。"""
-    plan = make_plan(mode='upload')
+def force_upload(full=False):
+    """本地为准：把本地内容（含本地删除）推到云端，只传有变化的部分。
+    full=True 时无视差异，links.json / groups.json / 图标包全部重传（覆盖云端）。"""
+    plan = make_plan(mode='upload', force=full)
     return _execute_plan(plan, {}, 'upload')
 
 
-def force_download():
-    """云端为准：用云端内容覆盖本地（本地删了就从云端恢复），只拉有变化的部分。"""
-    plan = make_plan(mode='download')
+def force_download(full=False):
+    """云端为准：用云端内容覆盖本地（本地删了就从云端恢复），只拉有变化的部分。
+    full=True 时无视差异，整份拉下来覆盖本地。"""
+    plan = make_plan(mode='download', force=full)
     if not plan['remote_exists']:
         raise WebDAVError('云端不存在 bookmark_api 文件夹，无法下载')
     return _execute_plan(plan, {}, 'download')
