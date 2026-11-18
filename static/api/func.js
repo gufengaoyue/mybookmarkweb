@@ -9,6 +9,39 @@ let allGroups = [];        // 服务端分组注册表（含空分组）
 let activeGroup = '首页';
 let filterText = '';
 let expanded = new Set();
+// 书签显示样式：card = 卡片，list = 列表（只影响未搜索时的普通浏览，搜索结果始终是列表）
+let viewMode = 'card';
+try {
+  if (localStorage.getItem('linkViewMode') === 'list') viewMode = 'list';
+} catch (e) {}
+
+const VIEW_ICON_CARD = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+  '<rect x="3" y="3.5" width="7.4" height="7" rx="1.6"/><rect x="13.6" y="3.5" width="7.4" height="7" rx="1.6"/>' +
+  '<rect x="3" y="13.5" width="7.4" height="7" rx="1.6"/><rect x="13.6" y="13.5" width="7.4" height="7" rx="1.6"/></svg>';
+const VIEW_ICON_LIST = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+  '<rect x="3" y="4" width="3.2" height="3.2" rx="1"/><rect x="3" y="10.4" width="3.2" height="3.2" rx="1"/>' +
+  '<rect x="3" y="16.8" width="3.2" height="3.2" rx="1"/><path d="M9 5.6h12"/><path d="M9 12h12"/><path d="M9 18.4h12"/></svg>';
+
+// 刷新切换按钮的外观（图标与文字都表示“当前正在用的样式”）
+function applyViewMode() {
+  const btn = document.getElementById('viewToggleBtn');
+  if (!btn) return;
+  const icon = document.getElementById('viewToggleIcon');
+  const text = document.getElementById('viewToggleText');
+  const isList = viewMode === 'list';
+  if (icon) icon.innerHTML = isList ? VIEW_ICON_LIST : VIEW_ICON_CARD;
+  if (text) text.textContent = isList ? '列表' : '卡片';
+  btn.title = isList ? '当前为列表视图，点击切换为卡片视图' : '当前为卡片视图，点击切换为列表视图';
+  btn.classList.toggle('is-list', isList);
+}
+
+// 切换书签显示样式（卡片 ⇄ 列表），只影响未搜索时的浏览
+function toggleViewMode() {
+  viewMode = viewMode === 'card' ? 'list' : 'card';
+  try { localStorage.setItem('linkViewMode', viewMode); } catch (e) {}
+  applyViewMode();
+  renderCards();
+}
 // 拖拽状态：卡片拖到左侧分组上 = 改所属分组
 let draggingCardId = null;
 let groupDropDone = false;
@@ -186,6 +219,7 @@ async function loadData() {
       }
       // 默认全部收起子分组，只显示一级分组；选中分组时会自动展开其父链
       ensureExpanded(activeGroup);
+      applyViewMode();
       renderGroups();
       renderCards();
       clearAutofill();
@@ -574,8 +608,9 @@ function renderCards() {
     if (totalEl) totalEl.textContent = `${getGroupList().length} 组 · ${allData.length} 条`;
 
     const searching = !!filterText;
-    container.classList.toggle('card-grid', !searching);
-    container.classList.toggle('result-grid', searching);
+    const listMode = searching || viewMode === 'list';
+    container.classList.toggle('card-grid', !listMode);
+    container.classList.toggle('result-grid', listMode);
 
     if (!items.length) {
       const msg = searching
@@ -585,8 +620,8 @@ function renderCards() {
       return;
     }
 
-    // 搜索模式：列表视图（分组 / 添加日期 / 名称 / 图标+链接）
-    if (searching) {
+    // 列表视图：搜索命中时固定用列表；未搜索时由「视图切换」决定
+    if (listMode) {
       container.innerHTML = `
         <div class="result-head">
           <span class="r-cell">分组</span>
@@ -603,9 +638,9 @@ function renderCards() {
         <div class="result-row" data-id="${item.id}">
           <span class="r-cell r-group" title="${escapeAttr(group)}">${escapeHtml(clipText(group, 16))}</span>
           <span class="r-cell r-date">${formatAddedDate(item.id)}</span>
-          <span class="r-cell r-name" title="${escapeAttr(name)}">${escapeHtml(clipText(name, 20))}</span>
+          <span class="r-cell r-name" title="${escapeAttr(name + '\n分组：' + group)}">${escapeHtml(clipText(name, 20))}</span>
           <a class="r-cell r-link" href="${escapeAttr(url)}" target="_blank"
-             title="${escapeAttr(name + '\n' + url)}">
+             title="${escapeAttr(name + '\n' + url + '\n分组：' + group)}">
             <img class="r-icon" src="${escapeAttr(item.icon || '')}" alt=""
                  onerror="this.style.visibility='hidden'">
             <span class="r-url">${escapeHtml(clipText(shortUrl, 60))}</span>
@@ -622,10 +657,11 @@ function renderCards() {
     container.innerHTML = items.map(item => {
       const url = item.url || '';
       const shortUrl = url.replace(/^https?:\/\//i, '');
+      const group = normalizeGroup(item.group);
       return `
             <div class="card" data-id="${item.id}" draggable="true">
                 <a href="${url}" target="_blank" class="card-link"
-                   title="${escapeHtml(item.name)}\n${escapeHtml(url)}">
+                   title="${escapeAttr(item.name + '\n' + url + '\n分组：' + group)}">
                     <img src="${item.icon}" class="card-icon" onerror="this.style.display='none'" onload="this.style.display='block'">
                     <div class="card-content">
                         <h3 class="card-title">${escapeHtml(item.name)}</h3>
@@ -872,7 +908,25 @@ try {
 }
 
 async function deleteLink(id) {
-  if (!confirm('确认删除此链接？')) return;
+  const item = allData.find(x => String(x.id) === String(id));
+  const group = item ? normalizeGroup(item.group) : '';
+  const name = item ? item.name : '';
+
+  // 用站内自绘确认框（与「覆盖云端」同一套），不弹浏览器原生 confirm
+  if (window.JGY && JGY.confirm) {
+    const ok = await JGY.confirm({
+      title: '删除书签',
+      message: item
+        ? `「${name}」（分组：${group}）会从本地书签中移除。若要连云端一起删掉，删完再点「上传到云端」。`
+        : '这条书签会从本地书签中移除。',
+      confirmText: '删除',
+      cancelText: '保留',
+      type: 'danger'
+    });
+    if (!ok) return;
+  } else if (!confirm('确认删除此链接？')) {
+    return;
+  }
 
   try {
     const response = await fetch(server + '/' + id.toString(), {
@@ -880,9 +934,11 @@ async function deleteLink(id) {
     });
 
     if (!response.ok) throw new Error('删除失败');
+    if (typeof tip === 'function') tip('已删除该书签', 'success');
     loadData(); // 刷新列表
   } catch (error) {
-    alert(error.message);
+    if (typeof tip === 'function') tip(error.message || '删除失败', 'error');
+    else alert(error.message);
   }
 }
 

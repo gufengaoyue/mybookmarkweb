@@ -24,6 +24,10 @@
 
             <button id="collectBtn" class="collect-btn" onclick="toggleModal('block')"><span class="icon">⭐</span>新增收藏</button>
 
+            <button id="viewToggleBtn" class="collect-btn view-toggle" onclick="toggleViewMode()" title="切换书签显示样式">
+              <span class="icon" id="viewToggleIcon"></span><span id="viewToggleText">卡片</span>
+            </button>
+
             <!-- 收藏弹窗，动画效果 -->
             <div id="collectModal" class="modal">
               <div class="modal-content">
