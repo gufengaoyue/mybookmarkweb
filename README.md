@@ -97,12 +97,33 @@ flask-cors>=4.0,<5.0
 python server.py
 ```
 
-浏览器打开 [http://127.0.0.1:3000/](http://127.0.0.1:3000/)。默认监听 `0.0.0.0:3000`，局域网设备也能访问（见[安全提示](#安全提示)）。
+浏览器打开 [http://127.0.0.1:3000/](http://127.0.0.1:3000/)。
+
+默认 **端口 3000、只监听 `127.0.0.1`（本机回环）**，只有这台电脑能访问，同一 WiFi / 局域网里的手机、同事电脑都连不上（见[安全提示](#安全提示)）。
+
+#### 命令行参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--port` | `3000` | 监听端口，例如 `--port 8080` |
+| `--host` | `127.0.0.1` | 监听地址；`127.0.0.1`/`localhost` 仅本机，`0.0.0.0` 对外开放给局域网 |
+| `-h` / `--help` | — | 查看帮助 |
+
+```bash
+# 换端口（只本机）
+python server.py --port 8080
+
+# 放开给局域网（手机 / 平板访问，注意隐私）
+python server.py --host 0.0.0.0 --port 8080
+```
+
+前端接口走同源相对路径，**改端口不需要改任何前端代码**；`--host` 传 `0.0.0.0` 时启动日志会额外打印局域网访问地址。
 
 Windows 想无窗口常驻，可以：
 
 ```powershell
-Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
+Start-Process -FilePath "C:\Python311\pythonw.exe" `
+  -ArgumentList "server.py","--port","3000" `
   -WorkingDirectory "D:\path\to\web_api"
 ```
 
@@ -284,7 +305,10 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 确认 `static/api/links.json` 是合法 UTF-8 JSON（文件不能是 GBK，也不能有 BOM）。程序读写在 `save_data()` 中已统一 UTF-8 + 原子写，异常时会保留 `backups/` 里的上一份快照。
 
 **端口被占用**
-`server.py` 末尾固定 `port = 3000`，改一行即可；前端 `func.js` 里的 `server` / `groupServer` 变量也指向 3000，需要一起改。
+换一个端口即可：`python server.py --port 3001`。前端接口走同源相对地址，不需要改任何代码。
+
+**手机或另一台电脑打不开页面？**
+默认只监听 `127.0.0.1`，本来就只允许本机访问。确有需要时按[安全提示](#安全提示)用 `--host 0.0.0.0` 临时放开，同时留意同网段的任何人都能改你的书签。
 
 **图标不显示**
 `static/api/icon/` 被 `.gitignore` 忽略，从 GitHub 克隆下来图标是空的，需要通过云同步「下载到本地」或重新添加书签来补。
@@ -293,7 +317,15 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 
 ## 安全提示
 
-- 这是**单用户、无鉴权**的本地工具，默认监听 `0.0.0.0`，同局域网的人可以直接访问和修改你的书签。**不要把它直接暴露到公网**；如需外网访问，请套一层带认证的反向代理（Nginx Basic Auth / Tailscale 等）。
+- 这是**单用户、无鉴权**的本地工具，默认**只监听本机回环地址 `127.0.0.1:3000`**：局域网里的其他设备（手机、同事电脑）无法访问，也读不到、改不了你的书签数据。
+- 确实需要手机/平板临时访问时，再显式放开：
+
+  ```powershell
+  # 仅当前这次启动放开，关掉进程即恢复默认
+  python server.py --host 0.0.0.0 --port 8080
+  ```
+
+  放开后同网段设备即可访问 `http://<本机IP>:8080/`，此时**任何人拿到这个地址都能增删你的书签**，用完请改回默认（或关闭程序）。**任何时候都不要把它直接暴露到公网**；如需外网访问，请套一层带认证的反向代理（Nginx Basic Auth / Tailscale 等）。
 - `sync_config.json`（坚果云应用密码）、`.sync_state.json`、`backups/`、`links.json`、`groups.json`、`icon/` 全部在 `.gitignore` 中，**不要把它们提交到公开仓库**。
 - 上传/下载/覆盖都会改写数据，写盘前自动备份；重大操作前建议再点一次「本地备份」。
 

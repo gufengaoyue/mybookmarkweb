@@ -811,12 +811,20 @@ def sync_backup():
 
 
 if __name__ == '__main__':
-    port = 3000
+    import argparse
 
-    # 默认只监听本机回环地址：局域网/外网的其他设备访问不到，
-    # 避免同一 WiFi 下的人直接读到、改动你的书签。
-    # 确实需要手机/平板访问时，临时设环境变量 WEB_API_HOST=0.0.0.0 再启动。
-    host = os.environ.get('WEB_API_HOST', '127.0.0.1').strip() or '127.0.0.1'
+    parser = argparse.ArgumentParser(
+        prog='server.py',
+        description='Web 书签导航：默认只监听本机 127.0.0.1:3000')
+    parser.add_argument('--host', default=os.environ.get('WEB_API_HOST', '127.0.0.1'),
+                        help='监听地址，默认 127.0.0.1（仅本机可访问）；'
+                             '给局域网用可传 0.0.0.0')
+    parser.add_argument('--port', type=int, default=3000,
+                        help='监听端口，默认 3000')
+    args = parser.parse_args()
+
+    host = (args.host or '127.0.0.1').strip() or '127.0.0.1'
+    port = args.port
 
     if host in ('127.0.0.1', 'localhost'):
         print(f"服务运行在 http://127.0.0.1:{port}  （仅本机可访问）")

@@ -2,7 +2,8 @@
 // 对外暴露 window.JGY = { confirm, toast }
 
 (function () {
-  const SYNC_API = 'http://localhost:3000/api/sync';
+  // 与页面同源：端口由 server.py --port 决定（仅 file:// 打开时退回 3000）
+  const SYNC_API = ((location.protocol === 'file:') ? 'http://127.0.0.1:3000' : location.origin) + '/api/sync';
 
   // ============================================================ 样式注入
   const css = `

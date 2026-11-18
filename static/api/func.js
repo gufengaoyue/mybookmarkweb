@@ -1,7 +1,10 @@
 ﻿    // 表单提交处理
 
-let server = 'http://localhost:3000/api/links';
-let groupServer = 'http://localhost:3000/api/groups';
+// 接口走同源相对地址：端口由 server.py 的 --port 决定，前端不再写死 3000。
+// 仅在直接用 file:// 打开页面时才退回默认 3000。
+const API_ORIGIN = (location.protocol === 'file:') ? 'http://127.0.0.1:3000' : location.origin;
+let server = API_ORIGIN + '/api/links';
+let groupServer = API_ORIGIN + '/api/groups';
 
 // ---------- 分组 / 筛选状态 ----------
 let allData = [];
