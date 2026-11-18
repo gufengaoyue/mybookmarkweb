@@ -260,6 +260,10 @@ function buildGroupTree() {
       if (i === parts.length - 1) node.count = counts[path];
     });
   });
+  // 父分组计数 = 自身 + 所有子分组（点父分组时会连子分组的书签一起显示）
+  (function sum(node) {
+    Object.values(node.children).forEach(c => { sum(c); node.count += c.count; });
+  })(root);
   return root;
 }
 
@@ -506,14 +510,28 @@ async function deleteGroupPrompt(path) {
 function setActiveGroup(name) {
   activeGroup = normalizeGroup(name);
   ensureExpanded(activeGroup);
+  exitSearchMode();        // 点分组 = 退出搜索模式
   renderGroups();
   renderCards();
+}
+
+// 退出搜索：清空搜索框与过滤词
+function exitSearchMode() {
+  filterText = '';
+  userTypedFilter = false;
+  const f = document.getElementById('filter-input');
+  if (f) f.value = '';
 }
 
 function onFilterInput() {
   userTypedFilter = true;
   filterText = document.getElementById('filter-input').value.trim().toLowerCase();
   renderCards();
+}
+
+// 分组包含关系：自身 + 所有子分组
+function inGroupScope(itemGroup, path) {
+  return itemGroup === path || itemGroup.indexOf(path + '/') === 0;
 }
 
 function getVisibleItems() {
@@ -524,8 +542,24 @@ function getVisibleItems() {
       const url = (item.url || '').toLowerCase();
       return name.includes(kw) || url.includes(kw);
     }
-    return normalizeGroup(item.group) === activeGroup;
+    return inGroupScope(normalizeGroup(item.group), activeGroup);
   });
+}
+
+// 搜索结果的日期列：id 是毫秒时间戳
+function formatAddedDate(id) {
+  const n = Number(id);
+  if (!n || n < 1e11 || n > 6e12) return '—';
+  const d = new Date(n);
+  if (isNaN(d.getTime())) return '—';
+  const p = x => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// 按字符（而非字节/码元）截断，中文与 emoji 都不会截一半
+function clipText(s, max, tail = '...') {
+  const arr = Array.from(String(s == null ? '' : s));
+  return arr.length > max ? arr.slice(0, max).join('') + tail : arr.join('');
 }
 
 function escapeHtml(s) {
@@ -539,13 +573,52 @@ function renderCards() {
     const totalEl = document.getElementById('group-total');
     if (totalEl) totalEl.textContent = `${getGroupList().length} 组 · ${allData.length} 条`;
 
+    const searching = !!filterText;
+    container.classList.toggle('card-grid', !searching);
+    container.classList.toggle('result-grid', searching);
+
     if (!items.length) {
-      const msg = filterText
+      const msg = searching
         ? '没有找到匹配的书签'
         : `「${activeGroup}」还没有书签，把卡片拖进来就能收进这个分组`;
       container.innerHTML = `<div class="empty-tip">${escapeHtml(msg)}</div>`;
       return;
     }
+
+    // 搜索模式：列表视图（分组 / 添加日期 / 名称 / 图标+链接）
+    if (searching) {
+      container.innerHTML = `
+        <div class="result-head">
+          <span class="r-cell">分组</span>
+          <span class="r-cell">添加日期</span>
+          <span class="r-cell">名称</span>
+          <span class="r-cell">链接</span>
+          <span class="r-cell r-ops"></span>
+        </div>` + items.map(item => {
+        const group = normalizeGroup(item.group);
+        const url = item.url || '';
+        const shortUrl = url.replace(/^https?:\/\//i, '');
+        const name = item.name || '';
+        return `
+        <div class="result-row" data-id="${item.id}">
+          <span class="r-cell r-group" title="${escapeAttr(group)}">${escapeHtml(clipText(group, 16))}</span>
+          <span class="r-cell r-date">${formatAddedDate(item.id)}</span>
+          <span class="r-cell r-name" title="${escapeAttr(name)}">${escapeHtml(clipText(name, 20))}</span>
+          <a class="r-cell r-link" href="${escapeAttr(url)}" target="_blank"
+             title="${escapeAttr(name + '\n' + url)}">
+            <img class="r-icon" src="${escapeAttr(item.icon || '')}" alt=""
+                 onerror="this.style.visibility='hidden'">
+            <span class="r-url">${escapeHtml(clipText(shortUrl, 60))}</span>
+          </a>
+          <span class="r-cell r-ops">
+            <button class="r-op" onclick="editLink(${item.id})" title="编辑">✏️</button>
+            <button class="r-op" onclick="deleteLink(${item.id})" title="删除">🗑️</button>
+          </span>
+        </div>`;
+      }).join('');
+      return;
+    }
+
     container.innerHTML = items.map(item => {
       const url = item.url || '';
       const shortUrl = url.replace(/^https?:\/\//i, '');
@@ -734,7 +807,8 @@ async function saveNewOrder() {
   const visibleIds = Array.from(document.querySelectorAll('.card')).map(c => c.dataset.id);
   let k = 0;
   const fullIds = allData.map(item => {
-    if (normalizeGroup(item.group) === activeGroup) {
+    // 当前分组含子分组时，卡片里混着子孙分组的条目，按顺序回填同一个槽位
+    if (inGroupScope(normalizeGroup(item.group), activeGroup)) {
       return visibleIds[k++] || String(item.id);
     }
     return String(item.id);

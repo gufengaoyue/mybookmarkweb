@@ -574,3 +574,134 @@ body.timezone-hidden .main-content {
     background: #fff;
 }
 
+/* ========== 搜索结果：列表视图 ========== */
+.result-grid {
+    display: block;
+    padding: 12px 20px 40px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.result-head,
+.result-row {
+    display: grid;
+    grid-template-columns: 104px 84px minmax(120px, 1.05fr) minmax(150px, 2.1fr) 50px;
+    gap: 10px;
+    align-items: center;
+}
+
+.result-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: #7b8aa3;
+    background: #f7fbfe;
+    border-bottom: 1px solid #e2ecf5;
+    border-radius: 6px 6px 0 0;
+}
+
+.result-row {
+    padding: 8px 10px;
+    font-size: 13px;
+    border-bottom: 1px dashed #edf3f9;
+    transition: background-color .15s ease;
+}
+
+.result-row:hover {
+    background: #f4fafd;
+}
+
+.r-cell {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.r-group {
+    font-size: 12px;
+    color: #2f6fb0;
+    background: #eaf4fd;
+    border-radius: 10px;
+    padding: 2px 8px;
+    justify-self: start;
+    max-width: 100%;
+}
+
+.r-date {
+    font-size: 12px;
+    color: #8c9bb2;
+    font-variant-numeric: tabular-nums;
+}
+
+.r-name {
+    font-weight: 500;
+    color: #22313f;
+}
+
+.r-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    text-decoration: none;
+    color: #5a6b82;
+}
+
+.r-link:hover {
+    color: #0f7f93;
+}
+
+.r-icon {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+    object-fit: contain;
+}
+
+.r-url {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.r-ops {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    opacity: 0;
+    transition: opacity .15s ease;
+}
+
+.result-row:hover .r-ops {
+    opacity: 1;
+}
+
+.r-op {
+    padding: 2px 5px;
+    background: transparent;
+    color: #8aa0b8;
+    font-size: 12px;
+    line-height: 1;
+    border-radius: 4px;
+}
+
+.r-op:hover {
+    background: #eaf4fd;
+    color: #147f95;
+}
+
+@media (max-width: 900px) {
+    .result-head,
+    .result-row {
+        grid-template-columns: 88px 74px minmax(90px, 1fr) minmax(110px, 1.6fr) 46px;
+        gap: 6px;
+    }
+    .r-op {
+        padding: 2px 3px;
+    }
+}
+
