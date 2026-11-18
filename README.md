@@ -28,12 +28,12 @@ Flask (3000) ── 静态页 + REST API ── static/api/links.json / groups.j
 
 ## 技术栈
 
-| 层 | 使用 |
-| --- | --- |
+| 层   | 使用                                                                                      |
+| ---- | ----------------------------------------------------------------------------------------- |
 | 后端 | Python 3.9+ / Flask 3 / flask-cors，WebDAV 客户端只用标准库（`urllib` + `xml.etree`） |
-| 前端 | 原生 HTML + CSS + JavaScript（无框架、无构建步骤） |
-| 存储 | JSON 文件（`links.json`、`groups.json`）+ 本地图标目录 |
-| 同步 | 坚果云 WebDAV（`https://dav.jianguoyun.com/dav/`） |
+| 前端 | 原生 HTML + CSS + JavaScript（无框架、无构建步骤）                                        |
+| 存储 | JSON 文件（`links.json`、`groups.json`）+ 本地图标目录                                |
+| 同步 | 坚果云 WebDAV（`https://dav.jianguoyun.com/dav/`）                                      |
 
 ---
 
@@ -97,7 +97,9 @@ flask-cors>=4.0,<5.0
 python server.py
 ```
 
-浏览器打开 <http://127.0.0.1:3000/>。默认监听 `0.0.0.0:3000`，局域网设备也能访问（见[安全提示](#安全提示)）。
+浏览器打开 [http://127.0.0.1:3000/](http://127.0.0.1:3000/)。
+
+默认只监听本机回环地址 `127.0.0.1:3000`，**只有这台电脑能访问**，同一 WiFi / 局域网里的手机、同事电脑都连不上（见[安全提示](#安全提示)）。
 
 Windows 想无窗口常驻，可以：
 
@@ -132,9 +134,9 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 
 页面右上「云同步」→ 面板中输入：
 
-| 字段 | 内容 |
-| --- | --- |
-| 邮箱 | 坚果云账号邮箱 |
+| 字段     | 内容                               |
+| -------- | ---------------------------------- |
+| 邮箱     | 坚果云账号邮箱                     |
 | 应用密码 | 上一步生成的应用密码（非登录密码） |
 
 点「登录并连接」，凭据保存在本机 `sync_config.json`（密码以 base64 存储，**不入库**）。面板状态栏会显示已连接账号、本地/云端收藏数量、上次同步时间。
@@ -152,13 +154,13 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 
 ### 4. 四种操作语义（重要，别用反）
 
-| 操作 | 方向 | 比较方式 | 典型场景 |
-| --- | --- | --- | --- |
-| **立即同步** | 双向 | 条目级合并 + 删除传播 + 冲突逐条选择 | 两台机器都改过，想把两边合并 |
-| **上传到云端** | 本地 → 云端 | 只传有差异的部分（**本地删除会推到云端**） | 本机是唯一编辑端，改完就推 |
-| **下载到本地** | 云端 → 本地 | 只拉有差异的部分（**本地删掉的会从云端恢复**） | 新机器初始化、误删后恢复 |
-| **覆盖云端** | 本地 → 云端 | 不做比较，links/groups/icons 整份替换 | 手工换过图标、怀疑差异判断漏了 |
-| **覆盖本地** | 云端 → 本地 | 不做比较，整份替换（覆盖前自动备份本地） | 本地数据乱了，回到云端快照 |
+| 操作                 | 方向         | 比较方式                                             | 典型场景                       |
+| -------------------- | ------------ | ---------------------------------------------------- | ------------------------------ |
+| **立即同步**   | 双向         | 条目级合并 + 删除传播 + 冲突逐条选择                 | 两台机器都改过，想把两边合并   |
+| **上传到云端** | 本地 → 云端 | 只传有差异的部分（**本地删除会推到云端**）     | 本机是唯一编辑端，改完就推     |
+| **下载到本地** | 云端 → 本地 | 只拉有差异的部分（**本地删掉的会从云端恢复**） | 新机器初始化、误删后恢复       |
+| **覆盖云端**   | 本地 → 云端 | 不做比较，links/groups/icons 整份替换                | 手工换过图标、怀疑差异判断漏了 |
+| **覆盖本地**   | 云端 → 本地 | 不做比较，整份替换（覆盖前自动备份本地）             | 本地数据乱了，回到云端快照     |
 
 一句话记忆：**上传 = 以本地为准（会删云端）；下载 = 以云端为准（会补回本地）**。
 
@@ -182,12 +184,12 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 
 ### 7. 本地文件与备份
 
-| 文件 | 内容 | 是否入库 |
-| --- | --- | --- |
-| `sync_config.json` | `{email, password(base64), saved_at}` | 否（`.gitignore`） |
-| `.sync_state.json` | 本地/云端文件哈希、ETag、上次收藏数缓存 | 否 |
-| `backups/links_auto_*.json` | 每次写盘前的自动快照，保留最近 20 份 | 否 |
-| `backups/图标目录备份_*.zip` | 「覆盖本地」前的图标整包备份 | 否 |
+| 文件                           | 内容                                    | 是否入库             |
+| ------------------------------ | --------------------------------------- | -------------------- |
+| `sync_config.json`           | `{email, password(base64), saved_at}` | 否（`.gitignore`） |
+| `.sync_state.json`           | 本地/云端文件哈希、ETag、上次收藏数缓存 | 否                   |
+| `backups/links_auto_*.json`  | 每次写盘前的自动快照，保留最近 20 份    | 否                   |
+| `backups/图标目录备份_*.zip` | 「覆盖本地」前的图标整包备份            | 否                   |
 
 「退出登录并清除凭据」会删除 `sync_config.json`，云端文件不受影响。
 
@@ -227,42 +229,42 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 
 ## 使用说明
 
-| 位置 | 说明 |
-| --- | --- |
-| 顶部工具栏 | 搜索（默认百度，可切换 Bing / 360）、新增收藏、卡片/列表切换、云同步 |
-| 左侧搜索框 | 全库过滤，输入即筛；点分组会清空它并退出搜索 |
+| 位置       | 说明                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| 顶部工具栏 | 搜索（默认百度，可切换 Bing / 360）、新增收藏、卡片/列表切换、云同步                             |
+| 左侧搜索框 | 全库过滤，输入即筛；点分组会清空它并退出搜索                                                     |
 | 左侧分组树 | 点分组切换视图；`>` 箭头折叠/展开；悬停显示铅笔（重命名）、垃圾桶（删除）；顶部 `+` 新建分组 |
-| 卡片 | 悬停显示编辑/删除；拖拽可排序或跨分组；tooltip = 名称 + 完整网址 + 所在分组 |
-| 列表 | 分组 / 添加日期 / 名称（≤20 字）/ 图标+链接（≤60 字），超出 `...`，tooltip 给全文 |
-| 世界时间 | 右上浮窗，点 `×` 收起，主内容区自动让出宽度 |
+| 卡片       | 悬停显示编辑/删除；拖拽可排序或跨分组；tooltip = 名称 + 完整网址 + 所在分组                      |
+| 列表       | 分组 / 添加日期 / 名称（≤20 字）/ 图标+链接（≤60 字），超出 `...`，tooltip 给全文            |
+| 世界时间   | 右上浮窗，点 `×` 收起，主内容区自动让出宽度                                                   |
 
 ---
 
 ## API 一览
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/` | 页面入口 |
-| GET | `/api/links` | 全部书签 |
-| GET | `/api/links/<id>` | 单条书签 |
-| POST | `/api/links` | 新增（可带 icon URL 自动下载） |
-| PUT | `/api/links/<id>` | 更新（含改分组） |
-| DELETE | `/api/links/<id>` | 删除 |
-| POST | `/api/links/order` | 保存拖拽后的顺序（按槽位回填，防丢条） |
-| GET | `/api/groups` | 分组注册表 |
-| POST | `/api/groups` | 新建分组（可含 `/` 层级） |
-| POST | `/api/groups/rename` | 重命名（子分组一起改） |
-| POST | `/api/groups/delete` | 删除分组，书签转入「未分组」 |
-| GET | `/api/links/favicon` | 探测网站图标（返回可用地址，不落盘） |
-| GET | `/api/links/icon-preview` | 预览图标 |
-| GET | `/api/tabs` · `/api/tabs/url` | 枚举/读取已打开的浏览器标签页（Windows + UI Automation，仅同源调用） |
-| GET | `/api/sync/status` | 连接状态、本地/云端计数 |
-| POST | `/api/sync/login` · `/api/sync/logout` | 登录 / 清除凭据 |
-| POST | `/api/sync/sync` | 双向合并（可带冲突决议） |
-| POST | `/api/sync/upload` | 上传（`{background:true, full:false}`） |
-| POST | `/api/sync/download` | 下载（`{full:false}`） |
-| GET | `/api/sync/progress` | 上传进度轮询 |
-| POST | `/api/sync/backup` | 手动本地备份 |
+| 方法   | 路径                                        | 说明                                                                 |
+| ------ | ------------------------------------------- | -------------------------------------------------------------------- |
+| GET    | `/`                                       | 页面入口                                                             |
+| GET    | `/api/links`                              | 全部书签                                                             |
+| GET    | `/api/links/<id>`                         | 单条书签                                                             |
+| POST   | `/api/links`                              | 新增（可带 icon URL 自动下载）                                       |
+| PUT    | `/api/links/<id>`                         | 更新（含改分组）                                                     |
+| DELETE | `/api/links/<id>`                         | 删除                                                                 |
+| POST   | `/api/links/order`                        | 保存拖拽后的顺序（按槽位回填，防丢条）                               |
+| GET    | `/api/groups`                             | 分组注册表                                                           |
+| POST   | `/api/groups`                             | 新建分组（可含 `/` 层级）                                          |
+| POST   | `/api/groups/rename`                      | 重命名（子分组一起改）                                               |
+| POST   | `/api/groups/delete`                      | 删除分组，书签转入「未分组」                                         |
+| GET    | `/api/links/favicon`                      | 探测网站图标（返回可用地址，不落盘）                                 |
+| GET    | `/api/links/icon-preview`                 | 预览图标                                                             |
+| GET    | `/api/tabs` · `/api/tabs/url`          | 枚举/读取已打开的浏览器标签页（Windows + UI Automation，仅同源调用） |
+| GET    | `/api/sync/status`                        | 连接状态、本地/云端计数                                              |
+| POST   | `/api/sync/login` · `/api/sync/logout` | 登录 / 清除凭据                                                      |
+| POST   | `/api/sync/sync`                          | 双向合并（可带冲突决议）                                             |
+| POST   | `/api/sync/upload`                        | 上传（`{background:true, full:false}`）                            |
+| POST   | `/api/sync/download`                      | 下载（`{full:false}`）                                             |
+| GET    | `/api/sync/progress`                      | 上传进度轮询                                                         |
+| POST   | `/api/sync/backup`                        | 手动本地备份                                                         |
 
 ---
 
@@ -286,6 +288,9 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 **端口被占用**
 `server.py` 末尾固定 `port = 3000`，改一行即可；前端 `func.js` 里的 `server` / `groupServer` 变量也指向 3000，需要一起改。
 
+**手机或另一台电脑打不开页面？**
+默认只监听 `127.0.0.1`，本来就只允许本机访问。确有需要时按[安全提示](#安全提示)里的 `WEB_API_HOST=0.0.0.0` 临时放开，同时留意同网段的任何人都能改你的书签。
+
 **图标不显示**
 `static/api/icon/` 被 `.gitignore` 忽略，从 GitHub 克隆下来图标是空的，需要通过云同步「下载到本地」或重新添加书签来补。
 
@@ -293,7 +298,20 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 
 ## 安全提示
 
-- 这是**单用户、无鉴权**的本地工具，默认监听 `0.0.0.0`，同局域网的人可以直接访问和修改你的书签。**不要把它直接暴露到公网**；如需外网访问，请套一层带认证的反向代理（Nginx Basic Auth / Tailscale 等）。
+- 这是**单用户、无鉴权**的本地工具，默认**只监听本机回环地址 `127.0.0.1:3000`**：局域网里的其他设备（手机、同事电脑）无法访问，也读不到、改不了你的书签数据。
+- 确实需要手机/平板临时访问时，再显式放开：
+
+  ```powershell
+  # Windows PowerShell：仅当前这次启动生效，关掉窗口即恢复默认
+  $env:WEB_API_HOST = "0.0.0.0"; python server.py
+  ```
+
+  ```bash
+  # macOS / Linux
+  WEB_API_HOST=0.0.0.0 python server.py
+  ```
+
+  放开后同网段设备即可访问 `http://<本机IP>:3000/`，此时**任何人拿到这个地址都能增删你的书签**，用完请改回默认（或关闭程序）。**任何时候都不要把它直接暴露到公网**；如需外网访问，请套一层带认证的反向代理（Nginx Basic Auth / Tailscale 等）。
 - `sync_config.json`（坚果云应用密码）、`.sync_state.json`、`backups/`、`links.json`、`groups.json`、`icon/` 全部在 `.gitignore` 中，**不要把它们提交到公开仓库**。
 - 上传/下载/覆盖都会改写数据，写盘前自动备份；重大操作前建议再点一次「本地备份」。
 
@@ -304,7 +322,6 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" -ArgumentList "server.py" `
 - 仅面向个人使用，无多用户、无权限体系、无并发写入锁（同一时刻请在单一端编辑）。
 - 图标只保留域名维度的 favicon，不做多尺寸/深色模式适配。
 - `server.js` / `package.json` 是早期 Node 实验版本，未接入云同步，保留仅作参考。
-- 项目未附带许可证文件；如果要公开发布，建议补一份 `LICENSE`（例如 MIT）。
 
 ---
 

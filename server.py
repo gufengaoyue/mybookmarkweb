@@ -811,15 +811,21 @@ def sync_backup():
 
 
 if __name__ == '__main__':
-    # 获取本机IP地址
-    from socket import gethostbyname, gethostname
-
-    host = gethostbyname(gethostname())
     port = 3000
 
-    print(f"服务运行在 http://{host}:{port}")
-    print(f"局域网访问地址: http://{host}:{port}")
+    # 默认只监听本机回环地址：局域网/外网的其他设备访问不到，
+    # 避免同一 WiFi 下的人直接读到、改动你的书签。
+    # 确实需要手机/平板访问时，临时设环境变量 WEB_API_HOST=0.0.0.0 再启动。
+    host = os.environ.get('WEB_API_HOST', '127.0.0.1').strip() or '127.0.0.1'
+
+    if host in ('127.0.0.1', 'localhost'):
+        print(f"服务运行在 http://127.0.0.1:{port}  （仅本机可访问）")
+    else:
+        from socket import gethostbyname, gethostname
+        lan_ip = gethostbyname(gethostname())
+        print(f"服务运行在 http://127.0.0.1:{port}")
+        print(f"局域网访问地址: http://{lan_ip}:{port}  （已开放给局域网，注意隐私）")
 
     # threaded=True 支持并发请求；debug=False 关闭自动重载，
     # 避免 pythonw 后台运行时重载器在请求过程中杀死子进程导致 “Failed to fetch”
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    app.run(host=host, port=port, debug=False, threaded=True)
