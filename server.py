@@ -450,6 +450,61 @@ def delete_link(id):
 
 # ==================== 书签辅助：图标探测 / 已打开网页 ====================
 
+# 浏览器扩展推送过来的标签页列表（内存缓存，不落盘）
+_EXT_TABS = {'ts': 0.0, 'tabs': []}
+_EXT_TABS_TTL = 30.0          # 超过 30 秒没有心跳就认为扩展已退出
+
+
+def _fresh_ext_tabs():
+    if _EXT_TABS['tabs'] and (time.time() - _EXT_TABS['ts']) <= _EXT_TABS_TTL:
+        return list(_EXT_TABS['tabs'])
+    return []
+
+
+def _cdp_ports():
+    """要探测的 DevTools 端口。可用 WEB_API_CDP_PORTS=9222,9223 覆盖。"""
+    env = (os.environ.get('WEB_API_CDP_PORTS') or '').strip()
+    if env:
+        ports = [int(p) for p in env.split(',') if p.strip().isdigit()]
+        if ports:
+            return ports
+    return [9222, 9223, 9225, 9333]
+
+
+def _cdp_tabs():
+    """读 Chrome/Edge DevTools 协议：http://127.0.0.1:<port>/json/list。
+    只读不切标签，天然无闪烁；需要浏览器以 --remote-debugging-port 启动。"""
+    import urllib.request
+
+    for port in _cdp_ports():
+        try:
+            req = urllib.request.Request('http://127.0.0.1:%d/json/list' % port)
+            with urllib.request.urlopen(req, timeout=0.6) as resp:
+                data = json.loads(resp.read().decode('utf-8', 'ignore'))
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        tabs = []
+        for item in data:
+            if not isinstance(item, dict) or item.get('type') != 'page':
+                continue
+            url = (item.get('url') or '').strip()
+            if not url or url.startswith(('devtools://', 'chrome-extension://',
+                                          'edge-extension://', 'chrome://', 'edge://')):
+                continue
+            tabs.append({
+                'title': clean_text(item.get('title'))[:300],
+                'url': url,
+                'browser': 'devtools:%d' % port,
+                'index': len(tabs),
+                'win': 0,
+            })
+        if tabs:
+            return tabs
+    return []
+
+
 def _same_origin_only():
     """只允许同源页面调用这些敏感接口，防止其他网站跨站读取本机信息。"""
     origin = request.headers.get('Origin') or ''
@@ -589,14 +644,63 @@ def icon_preview():
 
 @app.route('/api/tabs', methods=['GET'])
 def list_open_tabs():
-    """列出本机已打开浏览器的标签页标题（不切换标签页，无闪动）。"""
+    """列出本机已打开浏览器的标签页。
+
+    三种来源，优先级从高到低：
+      ext  —— 浏览器扩展推送（有网址，零闪烁）
+      cdp  —— DevTools 调试端口（有网址，零闪烁，需要浏览器带 --remote-debugging-port 启动）
+      uia  —— UI Automation 兜底（只有标题，零闪烁；网址需要点选后切一次标签才能读到）
+    """
     if not _same_origin_only():
         return jsonify({'error': 'forbidden'}), 403
+
+    ext = _fresh_ext_tabs()
+    if ext:
+        return jsonify({'source': 'ext', 'tabs': ext})
+
+    cdp = _cdp_tabs()
+    if cdp:
+        return jsonify({'source': 'cdp', 'tabs': cdp})
+
     try:
         data = _run_tabs_script(['-Mode', 'titles'])
-        return jsonify({'tabs': data if isinstance(data, list) else [data]})
+        tabs = data if isinstance(data, list) else [data]
+        for t in tabs:
+            t['url'] = ''
+        return jsonify({'source': 'uia', 'tabs': tabs})
     except Exception as e:
-        return jsonify({'error': str(e), 'tabs': []}), 500
+        return jsonify({'error': str(e), 'source': 'uia', 'tabs': []}), 500
+
+
+@app.route('/api/tabs/push', methods=['POST'])
+def push_tabs():
+    """浏览器扩展（chrome.tabs）把当前标签页列表推过来，供页面读取。
+    只存在内存里，30 秒没心跳就失效，不落盘。"""
+    raw = request.json
+    if isinstance(raw, dict):
+        raw = raw.get('tabs')
+    if not isinstance(raw, list):
+        return jsonify({'error': 'tabs 必须是数组'}), 400
+
+    tabs = []
+    for item in raw[:200]:
+        if not isinstance(item, dict):
+            continue
+        url = clean_text(item.get('url'))[:2000]
+        if not url or url.startswith(('chrome-extension://', 'edge-extension://', 'devtools://')):
+            continue
+        tabs.append({
+            'title': clean_text(item.get('title'))[:300],
+            'url': url,
+            'browser': clean_text(item.get('browser'))[:40] or 'extension',
+            'index': len(tabs),
+            'win': 0,
+            'active': bool(item.get('active')),
+        })
+
+    _EXT_TABS['tabs'] = tabs
+    _EXT_TABS['ts'] = time.time()
+    return jsonify({'success': True, 'count': len(tabs)})
 
 
 @app.route('/api/tabs/url', methods=['GET'])
@@ -616,6 +720,25 @@ def read_tab_url():
         return jsonify({'error': str(e), 'url': ''}), 500
 
 
+def _powershell_exe():
+    """定位 PowerShell：环境变量 PATH 被裁剪时（例如后台启动）也能用。
+    优先 Windows PowerShell 5.1（UIAutomation 程序集最稳），再退回 PATH 里的 powershell / pwsh。"""
+    from shutil import which
+
+    system_root = os.environ.get('SystemRoot') or r'C:\Windows'
+    for cand in (
+        os.path.join(system_root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+        os.path.join(system_root, 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ):
+        if os.path.isfile(cand):
+            return cand
+    for name in ('powershell.exe', 'pwsh.exe', 'powershell', 'pwsh'):
+        p = which(name)
+        if p:
+            return p
+    return 'powershell.exe'
+
+
 def _run_tabs_script(args):
     """调用 browser_tabs.ps1，返回解析后的 JSON（列表或字典）。"""
     import subprocess
@@ -625,7 +748,7 @@ def _run_tabs_script(args):
 
     creationflags = 0x08000000 if os.name == 'nt' else 0  # CREATE_NO_WINDOW
     proc = subprocess.run(
-        ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script] + args,
+        [_powershell_exe(), '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script] + args,
         capture_output=True, timeout=45, creationflags=creationflags)
     out = (proc.stdout or b'').decode('utf-8', 'ignore').strip()
     for line in reversed(out.splitlines()):

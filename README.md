@@ -57,7 +57,8 @@ web_api/
 │       ├── links.json        # 书签数据（git 忽略）
 │       ├── groups.json       # 分组注册表，含空分组（git 忽略）
 │       └── icon/             # 本地图标（git 忽略）
-├── browser_tabs.ps1          # 可选：Windows 上枚举/读取浏览器标签页（供“选择已打开的网页”）
+├── browser_tabs.ps1          # 兜底方案：Windows UI Automation 枚举标签页（只有标题）
+├── browser-ext/              # 可选：浏览器扩展「标签页桥」，把带网址的标签列表推给本服务
 ├── server.js / package.json  # 早期 Node/Express 实验版本，未接入云同步，可忽略
 └── .gitignore
 ```
@@ -257,6 +258,49 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" `
 | 列表       | 分组 / 添加日期 / 名称（≤20 字）/ 图标+链接（≤60 字），超出 `...`，tooltip 给全文            |
 | 世界时间   | 右上浮窗，点 `×` 收起，主内容区自动让出宽度                                                   |
 
+### 新增收藏：选择已打开的网页
+
+「新增收藏」→「选择已打开的网页」支持三种数据来源，优先级由高到低：
+
+| 来源 | 能拿到网址 | 是否切换标签（闪烁） | 需要什么 |
+| --- | --- | --- | --- |
+| `browser-ext/` 扩展 | 是 | **不切换** | 一次性加载一个本地扩展 |
+| DevTools 端口 | 是 | **不切换** | 浏览器带 `--remote-debugging-port` 启动 |
+| `browser_tabs.ps1`（UI Automation） | 否，只有标题 | 点选时要切一次标签读地址栏 | 无需配置，Windows 自带 |
+
+页面顶部的提示会自动说明当前处于哪种模式：
+
+- 有网址时 → 「直接填入网址，不会切换标签页」，点一条即填。
+- 只有标题时 → 「选中的那条会短暂切过去读地址再切回」。
+
+#### 方案一：装本地扩展（推荐，零闪烁 + 有网址）
+
+1. 打开 `chrome://extensions`（Edge 是 `edge://extensions`），打开右上「开发者模式」。
+2. 点「加载解压缩的扩展」，选中仓库里的 `browser-ext/` 目录。
+3. 扩展会立即把当前标签页（标题 + 网址）推给 `http://127.0.0.1:<端口>/api/tabs/push`；之后新建/关闭/切换/刷新标签都会自动重推，另有 30 秒心跳。
+4. 回到页面打开「选择已打开的网页」，列表就带网址了。
+
+> 扩展只申请 `tabs` 权限用于读取标题与网址，只向 `127.0.0.1` / `localhost` 发包，数据仅存在服务端内存里。
+> 换端口无需改扩展：它会依次尝试 3000 / 3001 / 8080 / 8000，成功一次就记住（也可在扩展存储里改 `port`）。
+
+#### 方案二：DevTools 调试端口（零闪烁 + 有网址，但不适合日常浏览器）
+
+用带调试端口的快捷方式启动浏览器：
+
+```powershell
+& "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+```
+
+服务端会探测 `9222 / 9223 / 9225 / 9333`（可用 `WEB_API_CDP_PORTS=9222,9223` 覆盖），读到后直接走 `/json/list` 取全部标签的标题与网址。
+
+> 注意：Chrome / Edge 从 136 版起，**默认用户目录下会禁用调试端口**（必须配一个单独的 `--user-data-dir`），
+> 那等于换了个浏览器配置、看不到你日常会话里的标签。所以日常使用建议走方案一（扩展），方案二只适合临时排查。
+
+#### 方案三：UI Automation 兜底（默认，无需配置）
+
+`browser_tabs.ps1` 用 Windows UI Automation 读标签条上的**标题**（不切换、不闪），只有点选某一条时才把那个标签切过去读地址栏再切回——这就是你看到的"闪一下"。
+它不需要额外安装，没装扩展、没开调试端口时就自动走这条路。
+
 ---
 
 ## API 一览
@@ -276,7 +320,8 @@ Start-Process -FilePath "C:\Python311\pythonw.exe" `
 | POST   | `/api/groups/delete`                      | 删除分组，书签转入「未分组」                                         |
 | GET    | `/api/links/favicon`                      | 探测网站图标（返回可用地址，不落盘）                                 |
 | GET    | `/api/links/icon-preview`                 | 预览图标                                                             |
-| GET    | `/api/tabs` · `/api/tabs/url`          | 枚举/读取已打开的浏览器标签页（Windows + UI Automation，仅同源调用） |
+| GET    | `/api/tabs` · `/api/tabs/url`          | 列出标签页（扩展 / DevTools 端口优先，UI Automation 兜底）；`/url` 仅兜底模式用 |
+| POST   | `/api/tabs/push`                       | 浏览器扩展推送标签页列表（仅内存缓存，30 秒无心跳即失效） |
 | GET    | `/api/sync/status`                        | 连接状态、本地/云端计数                                              |
 | POST   | `/api/sync/login` · `/api/sync/logout` | 登录 / 清除凭据                                                      |
 | POST   | `/api/sync/sync`                          | 双向合并（可带冲突决议）                                             |

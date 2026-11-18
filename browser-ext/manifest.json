@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "书签导航 · 标签页桥",
+  "version": "1.0.0",
+  "description": "把当前打开的标签页（含网址）推送给本地「网页导航」，供新增收藏时直接选择，无需切换标签。",
+  "permissions": ["tabs", "alarms", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

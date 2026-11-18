@@ -118,7 +118,8 @@ function maybeAutoIcon() {
 }
 
 // ---------- 读取已打开的网页 ----------
-// 只列标题（不切换标签页、不闪动）；用户点中某一条时，才去读那一个标签的网址
+// 零闪烁优先：扩展推送 / DevTools 端口这两种来源本身就带网址，点选即可填入；
+// 只有 UI Automation 兜底时，才需要切一次标签读地址栏（会闪一下）。
 async function pickOpenTab(e) {
   if (e) e.preventDefault();
   const box = document.getElementById('tabPicker');
@@ -131,39 +132,39 @@ async function pickOpenTab(e) {
     if (!r.ok) throw new Error(data.error || '读取失败');
     const tabs = data.tabs || [];
     if (!tabs.length) {
-      box.innerHTML = '<div class="tab-picker-tip">没有读取到已打开的网页（仅支持 Edge / Chrome）</div>';
+      box.innerHTML = '<div class="tab-picker-tip">没有读取到已打开的网页'
+        + '（仅支持 Edge / Chrome；装浏览器扩展或开启调试端口可读到网址）</div>';
       return;
     }
-    box.innerHTML = '<div class="tab-picker-tip">点一条即可填入（选中的那条会短暂切过去读地址再切回）</div>' +
+    const source = data.source || 'uia';
+    const hasUrl = tabs.some(t => t.url);
+    const tipText = hasUrl
+      ? (source === 'ext'
+        ? '直接填入网址，不会切换标签页（数据来自浏览器扩展）'
+        : '直接填入网址，不会切换标签页（数据来自 DevTools 端口）')
+      : '点一条即可填入（只有标题可读，选中的那条会短暂切过去读地址再切回）';
+    box.innerHTML = `<div class="tab-picker-tip">${tipText}</div>` +
       tabs.map((t, i) => `
       <div class="tab-item" data-idx="${i}">
         <div class="tab-item-title">${escapeHtml(t.title || '(无标题)')}</div>
-        <div class="tab-item-url">${escapeHtml(t.browser || '')} · 标签 ${t.index + 1}</div>
+        <div class="tab-item-url">${escapeHtml(t.url || ((t.browser || '') + ' · 标签 ' + (t.index + 1)))}</div>
       </div>`).join('');
     box.querySelectorAll('.tab-item').forEach(el => {
       el.onclick = async () => {
         const t = tabs[Number(el.dataset.idx)];
         el.classList.add('loading');
         const tf = el.querySelector('.tab-item-url');
-        tf.textContent = '读取网址中…';
+        let url = t.url || '';
         try {
-          const resp = await fetch('/api/tabs/url?win=' + t.win + '&idx=' + t.index);
-          const d = await resp.json();
-          if (!d.url) throw new Error(d.error || '没读到网址');
-          document.getElementById('collectUrl').value = d.url;
-          tf.textContent = d.url;
-          const nameEl = document.getElementById('collectName');
-          if (!(nameEl.value || '').trim()) nameEl.value = t.title || '';
-          // 换了网址，旧的自动图标不再适用
-          const iconEl = document.getElementById('collectIcon');
-          if ((iconEl.value || '').trim() === autoIconValue) {
-            iconEl.value = '';
-            autoIconValue = '';
-            updateIconPreview();
+          if (!url) {
+            tf.textContent = '读取网址中…（会短暂切换标签）';
+            const resp = await fetch('/api/tabs/url?win=' + t.win + '&idx=' + t.index);
+            const d = await resp.json();
+            url = d.url || '';
+            if (!url) throw new Error(d.error || '没读到网址');
           }
+          await applyPickedTab(url, t.title);
           box.style.display = 'none';
-          autoIconTried = '';
-          autoFetchIcon();
         } catch (err) {
           tf.textContent = '读取失败：' + err.message;
         }
@@ -171,6 +172,22 @@ async function pickOpenTab(e) {
     });
   } catch (err) {
     box.innerHTML = '<div class="tab-picker-tip">读取失败：' + escapeHtml(String(err.message)) + '</div>';
+  }
+
+  // 把选中的标签页填进「新增收藏」表单，并顺手探测图标
+  async function applyPickedTab(url, title) {
+    document.getElementById('collectUrl').value = url;
+    const nameEl = document.getElementById('collectName');
+    if (!(nameEl.value || '').trim()) nameEl.value = title || '';
+    // 换了网址，旧的自动图标不再适用
+    const iconEl = document.getElementById('collectIcon');
+    if ((iconEl.value || '').trim() === autoIconValue) {
+      iconEl.value = '';
+      autoIconValue = '';
+      updateIconPreview();
+    }
+    autoIconTried = '';
+    autoFetchIcon();
   }
 }
 
