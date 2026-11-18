@@ -1,0 +1,6 @@
+# Web 书签导航（web_api）后端依赖
+# 需要 Python 3.9+（开发环境 3.11）
+Flask>=3.0,<4.0
+flask-cors>=4.0,<5.0
+# 说明：坚果云 WebDAV 客户端（webdav_sync.py）只使用 Python 标准库，
+# 无需 requests / webdavclient3 等第三方包。
